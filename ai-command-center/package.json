@@ -1,0 +1,1 @@
+{"name":"ai-command-center","version":"0.1.0","private":true,"description":"Personal multi-agent AI administration (Phase 1)","main":"server.js","engines":{"node":">=18"},"scripts":{"start":"node server.js","test":"node --test test/app.test.js test/engine-crypto.test.js test/engine.test.js"}}

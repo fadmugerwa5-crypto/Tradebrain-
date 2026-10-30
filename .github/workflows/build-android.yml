@@ -1,0 +1,83 @@
+name: Build Android app
+on:
+  push: { branches: [main] }
+  workflow_dispatch: {}
+permissions: { contents: write }
+concurrency: { group: build-android, cancel-in-progress: true }
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+
+      - name: Install app dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build the app (bundled into the APK, no server)
+        run: |
+          npm run build
+          test -f dist/index.html || { echo "::error::dist/index.html missing"; exit 1; }
+
+      - name: Install Capacitor
+        working-directory: android-shell
+        run: npm install --no-audit --no-fund
+
+      - name: Create the Android project
+        working-directory: android-shell
+        run: npx cap add android
+
+      - name: Add the background service (keeps trading running, keeps the screen on)
+        working-directory: android-shell
+        run: |
+          JD=android/app/src/main/java/com/tradebrain/app
+          test -d "$JD" || { echo "::error::Android source folder $JD not found"; exit 1; }
+          cp native/*.java "$JD/"
+          python3 - <<'PY'
+          p = "android/app/src/main/AndroidManifest.xml"
+          s = open(p).read()
+          svc = '        <service android:name=".TradeBrainService" android:exported="false" android:foregroundServiceType="dataSync" />\n'
+          perms = "".join('    <uses-permission android:name="android.permission.%s" />\n' % x for x in ["FOREGROUND_SERVICE", "FOREGROUND_SERVICE_DATA_SYNC", "POST_NOTIFICATIONS", "WAKE_LOCK", "REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"])
+          assert "</application>" in s and "</manifest>" in s
+          s = s.replace("</application>", svc + "    </application>", 1)
+          s = s.replace("</manifest>", perms + "</manifest>", 1)
+          open(p, "w").write(s)
+          PY
+          grep -q TradeBrainService android/app/src/main/AndroidManifest.xml || { echo "::error::manifest patch failed"; exit 1; }
+
+      - name: Brand the icon and copy the app in
+        working-directory: android-shell
+        run: |
+          cp -r icons/. android/app/src/main/res/
+          BG=android/app/src/main/res/values/ic_launcher_background.xml
+          [ -f "$BG" ] && sed -i 's/#FFFFFF/#0C0E12/I' "$BG" || true
+          npx cap sync android
+          test -f android/app/src/main/assets/public/index.html || { echo "::error::app files were not copied into the APK"; exit 1; }
+
+      - name: Build the APK
+        working-directory: android-shell/android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Name the APK
+        working-directory: android-shell
+        run: |
+          APK=$(find android/app/build/outputs/apk -name '*.apk' | head -n 1)
+          test -n "$APK"
+          cp "$APK" TradeBrain.apk
+          ls -la TradeBrain.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TradeBrain-Android
+          path: android-shell/TradeBrain.apk
+          if-no-files-found: error
+
+      - name: Publish to the "latest" release
+        continue-on-error: true
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          gh release view latest >/dev/null 2>&1 || gh release create latest --title "TradeBrain - latest build" --notes "Rolling build from the main branch. Android: the .apk (standalone, no server). Windows: the portable .exe." --target "${{ github.sha }}" || true
+          gh release upload latest android-shell/TradeBrain.apk --clobber

@@ -1,0 +1,7 @@
+node_modules/
+*.apk
+android/
+data/
+.env
+.secret
+.pw

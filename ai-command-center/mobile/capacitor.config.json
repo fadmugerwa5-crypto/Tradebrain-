@@ -1,0 +1,13 @@
+{
+  "appId": "app.workhouse.ai",
+  "appName": "Workhouse",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  }
+}

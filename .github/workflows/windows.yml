@@ -1,0 +1,63 @@
+name: Windows app
+on:
+  workflow_dispatch:
+  push:
+    paths: ['index.html', 'windows/**', '.github/workflows/windows.yml']
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Copy the app page
+        shell: bash
+        run: |
+          cp windows/app.html windows/index.html
+          mkdir -p windows/resources
+          cp windows/mt5bridge.py windows/resources/mt5bridge.py
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Pack the MT5 link as a program (optional, the app falls back to Python if this fails)
+        continue-on-error: true
+        shell: bash
+        run: |
+          pip install MetaTrader5 pyinstaller
+          pyinstaller --onefile --collect-all MetaTrader5 --name mt5bridge --distpath windows/resources windows/mt5bridge.py
+      - name: Bundle Python and MetaTrader5 (so the app needs no separate install)
+        continue-on-error: true
+        shell: bash
+        working-directory: windows
+        run: |
+          mkdir -p py
+          curl -fsSL -o py.zip https://www.python.org/ftp/python/3.12.7/python-3.12.7-embed-amd64.zip
+          unzip -q -o py.zip -d py
+          rm -f py.zip
+          mkdir -p py/Lib/site-packages
+          python -m pip install --quiet --no-cache-dir --only-binary=:all: --platform win_amd64 --python-version 3.12 --target py/Lib/site-packages MetaTrader5
+          printf 'python312.zip\n.\nLib\\site-packages\nimport site\n' > py/python312._pth
+          ./py/python.exe -c "import MetaTrader5; print('MetaTrader5 module ok')" || { rm -rf py; mkdir -p py; }
+      - name: Build
+        shell: bash
+        working-directory: windows
+        run: |
+          npm install
+          cp node_modules/lightweight-charts/dist/lightweight-charts.standalone.production.js lwc.js
+          npm run dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TradeBrain-Windows
+          path: windows/dist/*.exe
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: windows-latest
+          name: TradeBrain for Windows
+          make_latest: false
+          files: |
+            windows/dist/*.exe
+            windows/mt5bridge.py
+            windows/start-bridge.bat
