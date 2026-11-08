@@ -80,3 +80,6 @@ Internal school use.
 
 ## v1.5.0 — Academics
 Syllabus coverage, tests & marks with approval and audit trail, performance analysis, workload, reports (PDF/Excel), academic calendar, lesson-plan review, optional AI assistant. See `docs/ACADEMIC.md`.
+
+## v1.6.0 — Setup tools and Windows app
+Bulk classes, rename/delete, smarter imports, starting-PIN sheet, join code, term start, weekly summary; Android + Windows builds from one workflow. See `docs/SETUP-AND-APPS.md`.

@@ -67,7 +67,8 @@
             <input class="input" data-api placeholder="https://your-school.example.com">
             <button class="btn" data-connect>${CP.icon("wifi")}</button>
           </div>
-          <div class="t-xs dim mt-2">Leave blank to keep everything on this phone.</div>
+          <button class="btn block mt-3" data-scan-join>${CP.icon("qr")} Scan the school's join code</button>
+          <div class="t-xs dim mt-2">Ask the administrator to show the join code (Admin → School setup). Leave blank to keep everything on this phone.</div>
         </div>` : ""}`;
 
       const input = wrap.querySelector("[data-staff]");
@@ -77,6 +78,8 @@
       const regBtn = wrap.querySelector("[data-register]");
       if (regBtn) regBtn.onclick = () => openRegisterSheet();
 
+      const sj = wrap.querySelector("[data-scan-join]");
+      if (sj) sj.onclick = () => CP.school && CP.school.scanJoin(() => draw());
       const api = wrap.querySelector("[data-api]");
       if (api) {
         api.value = CP.storage.get("api", "") || "";

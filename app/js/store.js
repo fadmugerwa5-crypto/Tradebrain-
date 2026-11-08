@@ -558,7 +558,7 @@
       S.data.users.push(u);
     }
     const pinRaw = patch.pin != null ? String(patch.pin) : null;
-    Object.keys(patch).forEach((k) => { if (k !== "pin") u[k] = patch[k]; });
+    Object.keys(patch).forEach((k) => { if (k !== "pin" && patch[k] !== undefined) u[k] = patch[k]; }); // an undefined id must never erase the real one
     if (pinRaw) u.pin = CP.digest(pinRaw);
     if (!u.role) u.role = "teacher";
     if (u.active == null) u.active = true;
@@ -595,6 +595,62 @@
     }
     S.save(); S.emit("classes");
     return { klass: c, isNew };
+  };
+
+  // "S1-S6" or "S1, S2, S3"  ×  "A-D" or "A, B, C"  →  class ids. Streams may be empty.
+  function expandList(str, isStream) {
+    const out = [];
+    String(str || "").split(/[,;\s]+/).map((x) => x.trim().toUpperCase()).filter(Boolean).forEach((tok) => {
+      let m = /^([A-Z]*)(\d+)\s*[-–]\s*[A-Z]*(\d+)$/.exec(tok);
+      if (m && !isStream) {
+        const a = Number(m[2]), b = Number(m[3]);
+        if (b >= a && b - a < 30) for (let i = a; i <= b; i++) out.push(m[1] + i);
+        return;
+      }
+      m = /^([A-Z])\s*[-–]\s*([A-Z])$/.exec(tok);
+      if (m && isStream) {
+        for (let c = m[1].charCodeAt(0); c <= m[2].charCodeAt(0) && out.length < 40; c++) out.push(String.fromCharCode(c));
+        return;
+      }
+      const clean = tok.replace(/[^A-Z0-9]/g, "");
+      if (clean) out.push(clean);
+    });
+    return Array.from(new Set(out));
+  }
+  S.planClasses = function (levels, streams) {
+    const L = expandList(levels, false), St = expandList(streams, true);
+    const ids = [];
+    L.forEach((l) => (St.length ? St : [""]).forEach((st) => ids.push({ id: l + st, level: l, stream: st })));
+    return ids.map((c) => Object.assign(c, { exists: S.data.classes.some((x) => x.id === c.id) }));
+  };
+  S.classUsage = function (id) {
+    const A = (S.data.acad = S.data.acad || {});
+    return {
+      lessons: S.data.timetable.filter((r) => r.classId === id).length,
+      learners: (A.students || []).filter((x) => x.classId === id).length,
+      assessments: (A.assessments || []).filter((x) => x.classId === id).length,
+      progress: (A.progress || []).filter((x) => x.classId === id).length,
+    };
+  };
+  // Renaming moves the lessons to the new name. It is refused when learners, marks or
+  // syllabus progress are tied to the old name, because those records would be orphaned.
+  S.renameClass = function (oldId, newRaw) {
+    const newId = String(newRaw || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const c = S.data.classes.find((x) => x.id === oldId);
+    if (!c) return { ok: false, reason: "That class does not exist." };
+    if (!newId) return { ok: false, reason: "Use letters and numbers, e.g. S5C." };
+    if (newId === oldId) return { ok: true, id: newId };
+    if (S.data.classes.some((x) => x.id === newId)) return { ok: false, reason: newId + " already exists." };
+    const u = S.classUsage(oldId);
+    if (u.learners || u.assessments || u.progress) return { ok: false, reason: oldId + " has " + [u.learners && u.learners + " learner(s)", u.assessments && u.assessments + " assessment(s)", u.progress && u.progress + " syllabus record(s)"].filter(Boolean).join(", ") + ". Those records are tied to its name, so it cannot be renamed. Create the new class and move over instead." };
+    const moved = S.data.timetable.filter((r) => r.classId === oldId).map((r) => Object.assign({}, r, { id: "tt-" + r.day + "-" + r.period + "-" + newId, classId: newId, roomId: r.roomId === "room-" + oldId ? "room-" + newId : r.roomId }));
+    S.data.classes = S.data.classes.filter((x) => x.id !== oldId);
+    S.data.rooms = S.data.rooms.filter((r) => r.id !== "room-" + oldId);
+    S.data.zones = S.data.zones.filter((z) => z.roomId !== "room-" + oldId);
+    S.data.timetable = S.data.timetable.filter((r) => r.classId !== oldId);
+    S.saveClass({ id: newId, level: newId.replace(/\D+$/, ""), stream: (newId.match(/[A-Z]+$/) || [""])[0] });
+    S.replaceTimetable(S.data.timetable.concat(moved));
+    return { ok: true, id: newId, lessons: moved.length };
   };
 
   S.deleteClass = function (id) {
@@ -1269,9 +1325,23 @@
   S.normRole = normRole;
 
   /* Import staff. Returns {added, updated, errors:[]} */
-  S.importStaffCsv = function (text) {
+  // A random 4-digit PIN that is not obvious (no 1111, 1234, 4321, 2580, 1212…).
+  const WEAK_PINS = { "0000": 1, "1234": 1, "4321": 1, "2580": 1, "1212": 1, "2222": 1, "0123": 1, "9876": 1, "1004": 1 };
+  S.randomPin = function () {
+    for (let tries = 0; tries < 200; tries++) {
+      const a = new Uint32Array(1);
+      (global.crypto || window.crypto).getRandomValues(a);
+      const pin = String(a[0] % 10000).padStart(4, "0");
+      if (/^(\d)\1{3}$/.test(pin) || WEAK_PINS[pin]) continue;
+      return pin;
+    }
+    return "7391";
+  };
+
+  S.importStaffCsv = function (text, opts) {
+    opts = opts || {};
     const { rows } = S.csvObjects(text);
-    const res = { added: 0, updated: 0, errors: [] };
+    const res = { added: 0, updated: 0, errors: [], pins: [] };
     rows.forEach((r, i) => {
       const line = i + 2;
       const name = r.name || r.Name || r["full name"] || r["Full Name"];
@@ -1280,9 +1350,11 @@
       const role = normRole(r.role || r.Role);
       const dept = r.department || r.dept || r.Department || "";
       const subs = String(r.subjects || r.Subjects || "").split(/[;,/]/).map((x) => x.trim()).filter(Boolean);
-      const pin = String(r.pin || r.PIN || "").trim();
+      let pin = String(r.pin || r.PIN || "").trim();
       if (pin && !/^\d{4,8}$/.test(pin)) { res.errors.push(`Line ${line}: PIN must be 4-8 digits.`); return; }
       const existing = S.byStaffNo(staffNo);
+      let startingPin = false;
+      if (!pin && opts.autoPin && !(existing && existing.pin)) { pin = S.randomPin(); startingPin = true; }
       const patch = {
         id: existing ? existing.id : undefined,
         name: String(name).trim(), staffNo: String(staffNo).trim(), role,
@@ -1291,19 +1363,56 @@
       };
       if (pin) patch.pin = pin;
       S.saveUser(patch);
+      if (startingPin) res.pins.push({ name: patch.name, staffNo: patch.staffNo, role, pin });
       if (existing) res.updated++; else res.added++;
     });
     S.save(true);
     return res;
   };
 
+  // Give every account that has no PIN a starting PIN. Existing PINs are stored
+  // scrambled and can never be shown, so people who already have one are skipped.
+  S.assignStartingPins = function () {
+    const out = [];
+    S.data.users.filter((u) => u.active !== false && !u.pin).forEach((u) => {
+      const pin = S.randomPin();
+      S.saveUser({ id: u.id, pin });
+      out.push({ name: u.name, staffNo: u.staffNo, role: u.role, pin });
+    });
+    S.save(true);
+    return out;
+  };
+
   /* Import a timetable. day = 1..5 (Mon..Fri) or Mon..Fri text.
      teacher = staff number or id. class = class id. room = room id or name. */
   const DAYS = { mon: 1, monday: 1, tue: 2, tues: 2, tuesday: 2, wed: 3, wednesday: 3, thu: 4, thur: 4, thurs: 4, thursday: 4, fri: 5, friday: 5 };
+  // What would this file create? Used to ask "create these new classes?" before importing.
+  S.timetableImportPlan = function (text) {
+    const { rows } = S.csvObjects(text);
+    const classes = [], teachers = [];
+    rows.forEach((r) => {
+      const classId = String(r.class || r.Class || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+      if (classId && !S.data.classes.some((c) => c.id === classId) && !classes.includes(classId)) classes.push(classId);
+      const tRef = String(r.teacher || r.Teacher || "").trim();
+      if (tRef && !S.byStaffNo(tRef) && !S.user(tRef) && !teachers.includes(tRef)) teachers.push(tRef);
+    });
+    return { rows: rows.length, classes, teachers };
+  };
   S.importTimetableCsv = function (text, opts) {
     opts = opts || {};
     const { rows } = S.csvObjects(text);
-    const res = { added: 0, skipped: 0, errors: [], clashes: [] };
+    const res = { added: 0, skipped: 0, errors: [], clashes: [], createdClasses: [], createdTeachers: [] };
+    if (opts.createClasses || opts.createTeachers) {
+      const plan = S.timetableImportPlan(text);
+      if (opts.createClasses) plan.classes.forEach((id) => {
+        S.saveClass({ id, level: id.replace(/\D+$/, ""), stream: (id.match(/[A-Z]+$/) || [""])[0] });
+        res.createdClasses.push(id);
+      });
+      if (opts.createTeachers) plan.teachers.forEach((ref) => {
+        S.saveUser({ name: "Teacher " + ref, staffNo: ref, role: "teacher", dept: "", subjects: [] });
+        res.createdTeachers.push(ref);
+      });
+    }
     const map = {};
     if (!opts.replace) S.data.timetable.forEach((r) => { map[r.id] = r; });
 
@@ -1312,7 +1421,7 @@
       const dayRaw = String(r.day || r.Day || "").trim().toLowerCase();
       const day = /^\d+$/.test(dayRaw) ? Number(dayRaw) : DAYS[dayRaw];
       const period = Number(r.period || r.Period);
-      const classId = String(r.class || r.Class || "").trim().toUpperCase();
+      const classId = String(r.class || r.Class || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
       if (!day || !period || !classId) { res.errors.push(`Line ${line}: needs day, period and class.`); return; }
       if (!S.data.classes.some((c) => c.id === classId)) { res.errors.push(`Line ${line}: unknown class "${classId}".`); return; }
       const tRef = String(r.teacher || r.Teacher || "").trim();

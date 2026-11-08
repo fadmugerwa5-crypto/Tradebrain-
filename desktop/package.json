@@ -1,0 +1,26 @@
+{
+  "name": "classpulse-desktop",
+  "version": "1.6.0",
+  "description": "ClassPulse for Windows",
+  "main": "main.js",
+  "private": true,
+  "author": "ClassPulse",
+  "scripts": {
+    "prepare-app": "node prepare.cjs",
+    "start": "node prepare.cjs && electron .",
+    "dist": "node prepare.cjs && electron-builder --win --publish never"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "org.classpulse.desktop",
+    "productName": "ClassPulse",
+    "directories": { "output": "dist" },
+    "files": ["main.js", "static-server.js", "app/**/*"],
+    "win": { "target": [{ "target": "nsis", "arch": ["x64"] }, { "target": "portable", "arch": ["x64"] }], "icon": "app/icons/icon-512.png" },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true, "artifactName": "ClassPulse-Setup-${version}.${ext}" },
+    "portable": { "artifactName": "ClassPulse-Portable-${version}.${ext}" }
+  }
+}

@@ -6,10 +6,10 @@
 
    Bump CACHE when you ship new files.
    ========================================================================== */
-const CACHE = "classpulse-v1.5.0";
+const CACHE = "classpulse-v1.6.0";
 // Bump CACHE *and* V together when you ship new files: index.html asks for
 // css/js with ?v=<V>, so old copies can never be served after an update.
-const V = "?v=1.5.0";
+const V = "?v=1.6.0";
 const SHELL = [
   "./",
   "./index.html",
@@ -39,6 +39,7 @@ const SHELL = [
   "./js/views-admin.js" + V,
   "./js/views-academic.js" + V,
   "./js/views-assess.js" + V,
+  "./js/views-school.js" + V,
   "./js/app.js" + V,
 ];
 

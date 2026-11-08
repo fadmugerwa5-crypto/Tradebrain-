@@ -41,6 +41,7 @@
       { id: "roster", label: "roster", icon: "book", hidden: true, parent: "academics" },
       { id: "rules", label: "rules", icon: "book", hidden: true, parent: "academics" },
       { id: "calendar", label: "calendar", icon: "book", hidden: true, parent: "academics" },
+      { id: "weekly", label: "weekly", icon: "book", hidden: true, parent: "academics" },
     ],
     head: [
       { id: "overview", label: "Overview", icon: "chart" },
@@ -59,6 +60,7 @@
       { id: "roster", label: "roster", icon: "book", hidden: true, parent: "academics" },
       { id: "rules", label: "rules", icon: "book", hidden: true, parent: "academics" },
       { id: "calendar", label: "calendar", icon: "book", hidden: true, parent: "academics" },
+      { id: "weekly", label: "weekly", icon: "book", hidden: true, parent: "academics" },
     ],
     admin: [
       { id: "overview", label: "Overview", icon: "shield" },
@@ -67,6 +69,8 @@
       { id: "qr", label: "QR Codes", icon: "qr" },
       { id: "academics", label: "Academics", icon: "sparkle" },
       { id: "marks", label: "Marks (older panel)", icon: "chart", hidden: true, parent: "academics" },
+      { id: "schoolsetup", label: "School setup", icon: "gear", hidden: true, parent: "overview" },
+      { id: "weekly", label: "Weekly summary", icon: "book", hidden: true, parent: "academics" },
       { id: "calendar", label: "Calendar", icon: "calendar" },
       { id: "settings", label: "Settings", icon: "gear" },
       { id: "me", label: "Me", icon: "user" },

@@ -137,6 +137,9 @@
         <b>name, staffNo, role, department, subjects, phone, pin</b> — only <b>name</b> and
         <b>staffNo</b> are required. A blank PIN means the teacher sets their own on first sign-in.</p>
         <textarea class="textarea" data-csv rows="9" placeholder="name,staffNo,role,department,subjects,phone,pin&#10;Jane Nakato,T-101,teacher,Mathematics,Mathematics;Additional Maths,0770000001,4821"></textarea>
+        <div class="list mt-4"><div class="li"><div class="body"><div class="name">Give a starting PIN to anyone without one</div>
+          <div class="meta">You get a sheet to print and hand out. Safer than a blank PIN, which the first person to type the staff number could claim.</div></div>
+          <div class="switch on" data-autopin></div></div></div>
         <div class="row gap-3 mt-4">
           <button class="btn grow" data-file>${CP.icon("download")} Choose a CSV file</button>
           <button class="btn primary grow" data-import>${CP.icon("check")} Import</button>
@@ -144,6 +147,8 @@
         <button class="btn ghost block mt-3" data-tpl>${CP.icon("list")} Download a template</button>`,
     });
     const el = sheet.el;
+    let autoPin = true;
+    el.querySelector("[data-autopin]").onclick = (e) => { autoPin = !autoPin; e.currentTarget.classList.toggle("on", autoPin); };
     el.querySelector("[data-tpl]").onclick = () => {
       S.download(new Blob(["\uFEFF" + S.staffTemplate()], { type: "text/csv" }), "classpulse-staff-template.csv");
     };
@@ -154,7 +159,7 @@
     el.querySelector("[data-import]").onclick = () => {
       const txt = el.querySelector("[data-csv]").value.trim();
       if (!txt) return CP.toast({ kind: "warn", msg: "Nothing to import yet." });
-      const res = S.importStaffCsv(txt);
+      const res = S.importStaffCsv(txt, { autoPin });
       if (CP.sync && CP.sync._token) S.data.users.forEach((u) => CP.sync.pushUser(u));
       S.audit(CP.me().id, "import-staff", { added: res.added, updated: res.updated, errors: res.errors.length });
       sheet.close();
@@ -169,6 +174,7 @@
           body: `<div class="col gap-2">${res.errors.map((e) => `<div class="t-sm">${CP.esc(e)}</div>`).join("")}</div>`,
         });
       }
+      if (res.pins && res.pins.length && CP.school) CP.school.showPinSheet(res.pins);
     };
   }
 
@@ -201,20 +207,39 @@
     el.querySelector("[data-import]").onclick = () => {
       const txt = el.querySelector("[data-csv]").value.trim();
       if (!txt) return CP.toast({ kind: "warn", msg: "Nothing to import yet." });
-      const res = S.importTimetableCsv(txt, { replace });
-      S.audit(CP.me().id, "import-timetable", { rows: res.added, errors: res.errors.length, clashes: res.clashes.length });
+      const plan = S.timetableImportPlan(txt);
+      if (!plan.classes.length && !plan.teachers.length) return runImport({});
+      // Ask first: the file mentions classes or teachers the school does not have yet.
+      const ask = CP.sheet({
+        title: "New names in this file",
+        body: `<p class="t-sm muted mb-3">The file mentions things that are not set up yet. Choose what to create, or leave a box off and those rows are listed as errors instead.</p>
+          ${plan.classes.length ? `<label class="row gap-3 mb-3" style="align-items:flex-start"><input type="checkbox" data-cc checked style="margin-top:3px"><span><b>${plan.classes.length} new class${plan.classes.length > 1 ? "es" : ""}</b><br><span class="t-sm dim">${plan.classes.map(CP.esc).join(", ")}<br>Each gets its own room and QR code.</span></span></label>` : ""}
+          ${plan.teachers.length ? `<label class="row gap-3 mb-3" style="align-items:flex-start"><input type="checkbox" data-ct style="margin-top:3px"><span><b>${plan.teachers.length} unknown teacher${plan.teachers.length > 1 ? "s" : ""}</b><br><span class="t-sm dim">${plan.teachers.map(CP.esc).join(", ")}<br>Made as “Teacher T-…” placeholders with no PIN. Rename them in People. Better: import your staff list first.</span></span></label>` : ""}
+          <button class="btn primary block" data-go>${CP.icon("check")} Continue</button>`,
+      });
+      ask.body.querySelector("[data-go]").onclick = () => {
+        const o = { createClasses: !!(ask.body.querySelector("[data-cc]") || {}).checked, createTeachers: !!(ask.body.querySelector("[data-ct]") || {}).checked };
+        ask.close(); runImport(o);
+      };
+      return;
+      function runImport(o) {
+      const res = S.importTimetableCsv(txt, Object.assign({ replace }, o));
+      if (res.createdClasses.length && CP.sync && CP.sync._token) CP.sync.pushConfig();
+      if (res.createdTeachers.length && CP.sync && CP.sync._token) S.data.users.forEach((u) => CP.sync.pushUser(u));
+      S.audit(CP.me().id, "import-timetable", { rows: res.added, errors: res.errors.length, clashes: res.clashes.length, newClasses: res.createdClasses.length, newTeachers: res.createdTeachers.length });
       sheet.close();
       CP.render();
       const problems = res.errors.concat(res.clashes);
       CP.toast({
         kind: problems.length ? "warn" : "ok",
-        msg: `Timetable import: ${res.added} rows read${problems.length ? ", " + problems.length + " to review" : ""}.`,
+        msg: `Timetable import: ${res.added} rows read${res.createdClasses.length ? ", " + res.createdClasses.length + " class(es) created" : ""}${problems.length ? ", " + problems.length + " to review" : ""}.`,
       });
       if (problems.length) {
         CP.sheet({
           title: "Rows that need a look",
           body: `<div class="col gap-2">${problems.map((e) => `<div class="t-sm">${CP.esc(e)}</div>`).join("")}</div>`,
         });
+      }
       }
     };
   }
@@ -236,6 +261,7 @@
           <button class="btn nowrap" data-import>${CP.icon("download")} Import</button>
           <button class="btn primary nowrap" data-add>${CP.icon("plus")} Add</button>
         </div>
+        ${S.data.users.some((u) => u.active !== false && !u.pin) ? `<button class="btn block mb-3" data-pins>${CP.icon("key")} ${S.data.users.filter((u) => u.active !== false && !u.pin).length} people have no PIN — create starting PINs</button>` : ""}
         ${CP.seg("pr", [
           { value: "all", label: "All" }, { value: "teacher", label: "Teachers" },
           { value: "dos", label: "DOS" }, { value: "head", label: "Head" }, { value: "admin", label: "Admin" },
@@ -264,6 +290,15 @@
         }, 300);
         CP.bindSeg(root, "pr", (v) => { Ctx.roleFilter = v; CP.render(); });
         root.querySelector("[data-add]").onclick = () => editUser(null);
+        const pb = root.querySelector("[data-pins]");
+        if (pb) pb.onclick = async () => {
+          if (!(await CP.confirm({ title: "Create starting PINs?", msg: "Everyone without a PIN gets one, and you can print the sheet. People who already have a PIN are not touched.", ok: "Create" }))) return;
+          const pins = S.assignStartingPins();
+          if (CP.sync && CP.sync._token) S.data.users.forEach((u) => CP.sync.pushUser(u));
+          S.audit(CP.me().id, "starting-pins", { count: pins.length });
+          CP.render();
+          if (CP.school) CP.school.showPinSheet(pins);
+        };
         root.querySelector("[data-import]").onclick = importStaff;
         root.querySelectorAll("[data-user]").forEach((b) => b.onclick = () => editUser(b.dataset.user));
       },

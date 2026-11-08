@@ -8,7 +8,7 @@ const win = {
   localStorage: { getItem: (k) => (k in mem ? mem[k] : null), setItem: (k, v) => { mem[k] = String(v); }, removeItem: (k) => { delete mem[k]; } },
   addEventListener() {}, navigator: { onLine: true }, matchMedia: () => ({ matches: false }),
 };
-win.window = win; win.CP = {}; win.TextEncoder = TextEncoder; win.Blob = Blob;
+win.window = win; win.crypto = require("node:crypto").webcrypto; win.CP = {}; win.TextEncoder = TextEncoder; win.Blob = Blob;
 const ctx = vm.createContext(Object.assign(win, { console, Date, Math, JSON, TextEncoder, Blob, Uint8Array, Uint32Array, DataView, ArrayBuffer, setTimeout, clearTimeout, URL, Intl, navigator: win.navigator, document: { documentElement: { getAttribute() {} }, createElement: () => ({}) } }));
 ["util.js", "store.js", "export.js", "academic.js"].forEach((f) => vm.runInContext(J(f), ctx, { filename: f }));
 const CP = win.CP, S = CP.store, A = CP.acad;
@@ -189,6 +189,49 @@ const imp = A.importStudents("Name,Class,Admission No\nGrace,S1A,A9\nNobody,S9Z,
 eq("student import adds valid rows, skips duplicates, reports bad ones", [imp.added, imp.bad.length], [1, 2]);
 const si = A.importSyllabus("Subject,Level,Term,Week,Topic,Subtopics,Objectives\nPhysics,S1,1,2,Measurement,Length; Mass,Use a ruler\n,S1,1,,Bad,,");
 ok("syllabus import splits subtopics and objectives", si.added === 1 && si.bad.length === 1 && A.topics({ subject: "Physics" })[0].subtopics.length === 2);
+
+/* ---- accounts */
+{ const u = S.saveUser({ id: undefined, name: "Peter Dos", staffNo: "DOS-9", role: "dos", dept: "Admin", subjects: [], active: true });
+  ok("a new account made from the form keeps an id (was lost before v1.5.1)", !!u.id && S.user(u.id) === u, u.id);
+  ok("a DOS stays a DOS, listed as staff and not counted as a teacher", u.role === "dos" && !S.teachers().some((t) => t.id === u.id) && S.staff().some((t) => t.id === u.id)); }
+
+/* ---- school setup: classes, imports, PINs */
+{
+  const plan = S.planClasses("S1-S3", "A-C");
+  eq("S1-S3 x A-C plans 9 classes", [plan.length, plan[0].id, plan[8].id], [9, "S1A", "S3C"]);
+  eq("a list works too, and no streams means level only", S.planClasses("S5, S6", "").map((c) => c.id), ["S5", "S6"]);
+  ok("existing classes are marked", S.planClasses("S1", "A").every((c) => c.exists === true));
+  ok("junk makes nothing", S.planClasses("", "A").length === 0);
+  ok("a runaway range is not expanded", S.planClasses("S1-S999", "").length === 0);
+  const before = S.data.classes.length;
+  S.planClasses("S7", "A,B").filter((c) => !c.exists).forEach((c) => S.saveClass({ id: c.id, level: c.level, stream: c.stream }));
+  ok("creating them gives each class its own room and QR zone", S.data.classes.length === before + 2 && ["S7A", "S7B"].every((id) => S.data.rooms.some((r) => r.id === "room-" + id) && S.data.zones.some((z) => z.roomId === "room-" + id)));
+  const csv = "day,period,class,subject,teacher,room\n1,2,s8a,Physics,T-900,\n2,2,S8A,Physics,T-900,";
+  const pl = S.timetableImportPlan(csv);
+  eq("the plan names the new class (normalised) and unknown teacher", [pl.classes, pl.teachers], [["S8A"], ["T-900"]]);
+  const dry = S.importTimetableCsv(csv, { dryRun: true });
+  ok("without permission nothing is created and rows are reported", dry.errors.length >= 1 && !S.data.classes.some((c) => c.id === "S8A"));
+  const go = S.importTimetableCsv(csv, { createClasses: true, createTeachers: true });
+  ok("with permission the class, teacher and lessons are created", go.createdClasses[0] === "S8A" && go.createdTeachers[0] === "T-900" && S.data.timetable.filter((r) => r.classId === "S8A").length === 2 && !!S.byStaffNo("T-900"), go);
+  eq("the new class has the right level and stream", [S.data.classes.find((c) => c.id === "S8A").level, S.data.classes.find((c) => c.id === "S8A").stream], ["S8", "A"]);
+  const rn = S.renameClass("S8A", "s8z");
+  ok("a class with only lessons can be renamed; lessons and room move", rn.ok && rn.lessons === 2 && S.data.timetable.filter((r) => r.classId === "S8Z").length === 2 && S.data.timetable.every((r) => r.classId !== "S8A") && S.data.rooms.some((r) => r.id === "room-S8Z") && !S.data.rooms.some((r) => r.id === "room-S8A"), rn);
+  ok("rename refuses a name that exists", !S.renameClass("S8Z", "S1A").ok);
+  A.save("students", { id: "st_ren", name: "Zed", classId: "S8Z", active: true });
+  ok("rename is refused when learners are tied to the class", !S.renameClass("S8Z", "S8Y").ok && /learner/.test(S.renameClass("S8Z", "S8Y").reason));
+  eq("class usage counts", [S.classUsage("S8Z").lessons, S.classUsage("S8Z").learners], [2, 1]);
+  const pins = new Set(); for (let i = 0; i < 300; i++) pins.add(S.randomPin());
+  ok("random PINs are 4 digits and never obvious", [...pins].every((p) => /^\d{4}$/.test(p) && !/^(\d)\1{3}$/.test(p) && !["1234", "4321", "0000", "2580"].includes(p)) && pins.size > 100);
+  const imp = S.importStaffCsv("name,staffNo,role,pin\nAnn One,Z-1,teacher,\nBob Two,Z-2,dos,4827\nCy Three,Z-3,teacher,", { autoPin: true });
+  ok("starting PINs are made only for people without one", imp.pins.length === 2 && imp.pins.every((p) => /^\d{4}$/.test(p.pin)) && imp.pins.map((p) => p.staffNo).sort().join() === "Z-1,Z-3", imp.pins);
+  ok("the printed PIN matches what the account stores", imp.pins.every((p) => S.byStaffNo(p.staffNo).pin === CP.digest(p.pin)));
+  const imp2 = S.importStaffCsv("name,staffNo,role\nAnn One,Z-1,teacher", { autoPin: true });
+  ok("importing again never replaces an existing PIN", imp2.pins.length === 0 && imp2.updated === 1);
+  const off = S.importStaffCsv("name,staffNo,role\nDee Four,Z-4,teacher", {});
+  ok("without the switch a blank PIN stays blank", off.pins.length === 0 && !S.byStaffNo("Z-4").pin);
+  const ap = S.assignStartingPins();
+  ok("'create starting PINs' covers exactly the people with none", ap.some((x) => x.staffNo === "Z-4") && ap.every((x) => !x.pin === false) && S.data.users.filter((u) => u.active !== false).every((u) => !!u.pin), ap.length);
+}
 
 /* ---- xlsx */
 const bytes = win.CP.exp.xlsxBytes([{ name: "Results", rows: [["Name", "Mark"], ["Amina & <Co>", 75], ["Brian", null]] }, { name: "Results", rows: [["x"]] }]);

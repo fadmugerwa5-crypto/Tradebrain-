@@ -38,7 +38,7 @@ const WIPE = !!flag("wipe", false);
 const HERE = __dirname;
 const APP_DIR = path.resolve(HERE, "..", "app");
 const DB_PATH = path.resolve(String(process.env.CLASSPULSE_DB || flag("db", path.join(HERE, "classpulse.db"))));
-const VERSION = "1.5.0";
+const VERSION = "1.6.0";
 const STARTED = Date.now();
 
 /* ------------------------------------------------------------------ utils */

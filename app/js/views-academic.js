@@ -81,10 +81,11 @@
       { id: "workload", icon: "users", t: "Workload & timetable checks", m: A.timetableIssues().length ? A.timetableIssues().length + " timetable problem(s) found" : "Lessons, hours and free periods per teacher" },
       { id: "acreports", icon: "download", t: "Reports", m: "Attendance, punctuality, coverage, results — PDF and Excel" },
       { id: "roster", icon: "user", t: "Class lists", m: S.data.classes.length + " classes · " + A.list("students").length + " learners" },
+      { id: "weekly", icon: "list", t: "Weekly summary", m: "Lateness, missed lessons, syllabus, marks waiting — one page" },
       { id: "calendar", icon: "calendar", t: "Academic calendar", m: "Terms, exams, meetings, holidays, deadlines" },
       { id: "rules", icon: "gear", t: "Grading & academic rules", m: "Pass mark, grade bands, alert thresholds" },
       { id: "assistant", icon: "sparkle", t: "AI teaching assistant (optional)", m: "Off unless the administrator turns it on" },
-    ] : [
+    ].concat(ctx.role === "admin" ? [{ id: "schoolsetup", icon: "gear", t: "School setup", m: "Checklist, classes, join code, term dates" }] : []) : [
       { id: "syllabus", icon: "book", t: "My syllabus coverage", m: behind ? behind + " behind schedule" : "Record what you have taught" },
       { id: "assess", icon: "chart", t: "My tests & marks", m: myDraft ? myDraft + " to finish or correct" : "Create tests, enter marks, submit", badge: A.myAssessments(me.id).filter((a) => a.status === "returned").length },
       { id: "plans", icon: "list", t: "My lesson plans", m: "Submit saved plans to the DOS" },
