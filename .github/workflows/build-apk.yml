@@ -1,0 +1,61 @@
+name: Build ClassPulse APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ classpulse ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Check source and server integration
+        run: |
+          node --check server/server.cjs
+          find app/js -name '*.js' -print0 | xargs -0 -n1 node --check
+          node server/server.cjs --port 8791 --quiet --db "$RUNNER_TEMP/classpulse-test.db" &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:8791/api/health >/dev/null; then break; fi
+            sleep 1
+          done
+          node tools/e2e.cjs http://127.0.0.1:8791
+          node tools/scan-test.cjs
+          node tools/logic-test.cjs
+          node tools/academic-test.cjs
+
+      - name: Install Capacitor 7
+        run: |
+          npm init -y
+          npm install @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7
+          npx cap add android
+          npx cap sync android
+
+      - name: Build APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClassPulse-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk

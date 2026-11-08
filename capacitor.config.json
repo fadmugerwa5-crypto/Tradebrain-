@@ -1,0 +1,16 @@
+{
+  "appId": "com.classpulse.app",
+  "appName": "ClassPulse",
+  "webDir": "app",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 1200,
+      "backgroundColor": "#0b0f19",
+      "showSpinner": false
+    }
+  }
+}

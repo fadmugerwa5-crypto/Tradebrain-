@@ -1,0 +1,19 @@
+# Database and its sidecar files
+server/*.db
+server/*.db-wal
+server/*.db-shm
+server/test*.db
+server/test*.db-wal
+server/test*.db-shm
+
+# Logs
+*.log
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
