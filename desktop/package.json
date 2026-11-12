@@ -1,0 +1,24 @@
+{
+  "name": "tradebrain-desktop",
+  "version": "1.0.390",
+  "private": true,
+  "description": "TradeBrain desktop app (the built app runs inside the window, no server)",
+  "author": "TradeBrain",
+  "main": "main.cjs",
+  "devDependencies": {
+    "electron": "33.2.1",
+    "electron-builder": "25.1.8"
+  },
+  "build": {
+    "appId": "com.tradebrain.app",
+    "productName": "TradeBrain",
+    "directories": { "output": "dist", "buildResources": "build" },
+    "files": ["main.cjs", "package.json"],
+    "extraResources": [{ "from": "../dist", "to": "app" }],
+    "win": {
+      "icon": "build/icon.png",
+      "target": [{ "target": "portable", "arch": ["x64"] }],
+      "artifactName": "TradeBrain-${version}-portable.exe"
+    }
+  }
+}

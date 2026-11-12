@@ -5,7 +5,15 @@ on:
 permissions: { contents: write }
 concurrency: { group: build-android, cancel-in-progress: true }
 jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm test
   android:
+    needs: tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,7 +23,7 @@ jobs:
         with: { distribution: temurin, java-version: 17 }
 
       - name: Install app dependencies
-        run: npm install --no-audit --no-fund
+        run: if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
 
       - name: Build the app (bundled into the APK, no server)
         run: |
@@ -24,7 +32,7 @@ jobs:
 
       - name: Install Capacitor
         working-directory: android-shell
-        run: npm install --no-audit --no-fund
+        run: if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
 
       - name: Create the Android project
         working-directory: android-shell

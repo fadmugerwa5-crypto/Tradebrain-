@@ -1,0 +1,7 @@
+{
+  "appId": "com.tradebrain.app",
+  "appName": "TradeBrain",
+  "webDir": "../dist",
+  "android": { "allowMixedContent": false },
+  "plugins": { "CapacitorHttp": { "enabled": true } }
+}

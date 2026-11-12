@@ -5,7 +5,15 @@ on:
 permissions: { contents: write }
 concurrency: { group: build-windows, cancel-in-progress: true }
 jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm test
   windows:
+    needs: tests
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -13,7 +21,8 @@ jobs:
         with: { node-version: 22 }
 
       - name: Install app dependencies
-        run: npm install --no-audit --no-fund
+        shell: bash
+        run: if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
 
       - name: Build the app
         shell: bash
@@ -23,7 +32,8 @@ jobs:
 
       - name: Install desktop dependencies
         working-directory: desktop
-        run: npm install --no-audit --no-fund
+        shell: bash
+        run: if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
 
       - name: Make the portable .exe
         working-directory: desktop
