@@ -1,6 +1,6 @@
 {
   "appId": "com.tradebrain.app",
-  "appName": "TradeBrain",
+  "appName": "Jump Scalper",
   "webDir": "../dist",
   "android": { "allowMixedContent": false },
   "plugins": { "CapacitorHttp": { "enabled": true } }

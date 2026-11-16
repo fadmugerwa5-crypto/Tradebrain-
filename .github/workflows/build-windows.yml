@@ -41,7 +41,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: TradeBrain-Windows
+          name: Jump-Scalper-Windows
           path: desktop/dist/*.exe
           if-no-files-found: error
 
@@ -50,5 +50,5 @@ jobs:
         shell: bash
         env: { GH_TOKEN: "${{ github.token }}" }
         run: |
-          gh release view latest >/dev/null 2>&1 || gh release create latest --title "TradeBrain - latest build" --notes "Rolling build from the main branch. Android: the .apk (standalone, no server). Windows: the portable .exe." --target "${{ github.sha }}" || true
+          gh release view latest >/dev/null 2>&1 || gh release create latest --title "Jump Scalper - latest build" --notes "Rolling build from the main branch. Android: the .apk (standalone, no server). Windows: the portable .exe." --target "${{ github.sha }}" || true
           gh release upload latest desktop/dist/*.exe --clobber

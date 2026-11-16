@@ -2,6 +2,10 @@ import { useEffect } from "react";
 import { marketData, binanceOrder, binanceBalances, binanceProtect, binanceProtectionStatus, binanceUnprotect, futuresPrepare, futuresProtect, futuresStatus, futuresUnprotect } from "@/lib/brokers/api";
 import { autoReconnect, refreshDerivMarkets } from "@/lib/brokers/connect";
 import { DERIV_GRANULARITY, deriv } from "@/lib/brokers/deriv";
+import { liveTicks } from "@/lib/brokers/live-ticks";
+import { decideJumpEntry, decideJumpExit, rankOpportunity } from "@/lib/trade/jump-runtime";
+import { readJumpMemory, recordJumpMemory } from "@/lib/trade/jump-memory";
+import { assessJump } from "@/lib/trade/jump-scalper";
 import { decide } from "@/lib/market/analyze";
 import { BINANCE_HOSTS, INTERVAL_MS, isDerivSymbol, isFuturesEnv, marketInfo, type BinanceEnv, type Candle } from "@/lib/market/types";
 import { learnGate } from "@/lib/learn/store";
@@ -507,6 +511,7 @@ async function derivSellNow(id: string, reason: string): Promise<boolean> {
 
 /** True while Close ALL is running, so a scan that started earlier cannot open a new trade behind its back. */
 let forceClosing = false;
+const jumpCooldowns = new Map<string, number>();
 
 export const isForceClosing = () => forceClosing;
 
@@ -762,6 +767,10 @@ async function cycle() {
         const env = dataEnv();
         const binOn = st.conn.binance.status === "connected";
         const derOn = st.conn.deriv.status === "connected";
+        // Subscribe to true intrabar streams independently of the slower candle/radar cycle.
+        // These ticks feed Jump Scalper analysis; they do not themselves authorize orders.
+        if (binOn) liveTicks.startBinance(st.settings.binanceEnv, st.settings.enabled.filter((s) => !isDerivSymbol(s)));
+        if (derOn) liveTicks.startDeriv(st.settings.enabled.filter((s) => isDerivSymbol(s) && marketInfo(s)?.open !== false));
         if (!binOn && !derOn) {
           // No broker, no markets, no charts. Nothing is fetched and nothing is analysed.
           const wait = st.conn.binance.status === "connecting" || st.conn.deriv.status === "connecting";
@@ -818,7 +827,7 @@ async function cycle() {
                 const value = status.bid_price != null ? Number(status.bid_price) : stake + profit;
                 useBrain.setState((cur) => ({ positions: cur.positions.map((p) => (p.id === pos.id ? { ...p, livePnl: profit, liveValue: value } : p)) }));
                 // Swing contracts keep their Deriv-held stop loss and take profit; the scalp's early-sell rules do not apply.
-                if (pos.book === "swing" || pos.hive) continue;
+                if (pos.book === "swing" || pos.hive || pos.strategy === "JUMP_SCALPER") continue;
                 const rule = scalpFor(live.settings.mode, live.settings.scalp);
                 const canTry = !!rule && Date.now() - pos.openedAt >= rule.normalMinHoldSec * 1000 && Date.now() - (sellFailAt[pos.id] ?? 0) > 30_000;
                 if (live.settings.mode === "normal" && rule) {
@@ -853,7 +862,7 @@ async function cycle() {
             if (!fr.ok || fr.state === "resting") continue;
             if (fr.state === "filled") {
               useBrain.setState((cur) => ({
-                positions: cur.positions.map((p) => (p.id === pos.id ? { ...p, status: "closed" as const, exit: fr.avgPrice, pnl: fr.pnl, exitReason: `Binance futures ${fr.leg === "stop" ? "stop" : "target"} filled at the exchange (order ${fr.orderId})`, closedAt: Date.now(), ocoListId: null } : p)),
+                positions: cur.positions.map((p) => (p.id === pos.id ? { ...p, status: "closed" as const, exit: fr.avgPrice, pnl: fr.pnl - (p.strategy === "JUMP_SCALPER" ? (p.entry * p.qty + fr.avgPrice * p.qty) * 0.001 : 0), fees: p.fees + (p.strategy === "JUMP_SCALPER" ? (p.entry * p.qty + fr.avgPrice * p.qty) * 0.001 : 0), exitReason: `Binance futures ${fr.leg === "stop" ? "stop" : "target"} filled at the exchange (order ${fr.orderId})`, closedAt: Date.now(), ocoListId: null } : p)),
               }));
               live.log(`${pos.symbol} ${fr.leg === "stop" ? "stop" : "target"} filled at Binance @ ${fr.avgPrice.toPrecision(6)}. ${fr.pnl >= 0 ? "+" : ""}${fr.pnl.toFixed(2)}`);
               refreshLossPause();
@@ -869,7 +878,7 @@ async function cycle() {
             const pnl = (r.avgPrice - pos.entry) * r.qty;
             useBrain.setState((cur) => ({
               positions: cur.positions.map((p) =>
-                p.id === pos.id ? { ...p, status: "closed" as const, exit: r.avgPrice, pnl, exitReason: `Binance ${r.leg === "stop" ? "stop" : "target"} filled at the exchange (order ${r.orderId})`, closedAt: Date.now(), ocoListId: null } : p,
+                p.id === pos.id ? { ...p, status: "closed" as const, exit: r.avgPrice, pnl: pnl - (p.strategy === "JUMP_SCALPER" ? (p.entry * p.qty + r.avgPrice * r.qty) * 0.001 : 0), fees: p.fees + (p.strategy === "JUMP_SCALPER" ? (p.entry * p.qty + r.avgPrice * r.qty) * 0.001 : 0), exitReason: `Binance ${r.leg === "stop" ? "stop" : "target"} filled at the exchange (order ${r.orderId})`, closedAt: Date.now(), ocoListId: null } : p,
               ),
             }));
             live.log(`${pos.symbol} ${r.leg === "stop" ? "stop" : "target"} filled at Binance @ ${r.avgPrice.toPrecision(6)}. ${pnl >= 0 ? "+" : ""}${pnl.toFixed(2)}`);
@@ -915,6 +924,91 @@ async function cycle() {
         const dailyRow = gs.rows.find((r) => r.key === "daily");
         const scalpHalt = scalp ? givebackHalt(positions, now, scalp, dailyRow ? dailyRow.target * 0.25 : goalAccount.startEquity * 0.001) : null;
         const haltReason = (gs.drawdownBreached || gs.sessionExpired ? gs.reason : venueNow === "binance" && !brokerFresh ? "Real Binance balance is unknown or stale, so entries are blocked rather than sized from the paper book." : venueNow === "deriv" && dBal == null ? "Deriv is not authorized, so entries are blocked." : null) ?? scalpHalt;
+
+        // Dedicated Jump Scalper execution path. When enabled, it owns entries/exits and
+        // the legacy candle planner is bypassed to prevent competing strategies.
+        if (stSettings.jump.enabled) {
+          const cfg = stSettings.jump;
+          const memory = readJumpMemory();
+          const byMarket = new Map<string, typeof memory>();
+          for (const r of memory) byMarket.set(`${r.venue}:${r.symbol}`, [...(byMarket.get(`${r.venue}:${r.symbol}`) ?? []), r]);
+          const jumpPositions = useBrain.getState().positions.filter(p => p.status === "open" && p.strategy === "JUMP_SCALPER");
+          // Independently manage every Jump position. Net estimates include round-trip
+          // fees and slippage; broker fills remain the source of final realized P&L.
+          for (const pos of jumpPositions) {
+            if (pos.venue === "deriv") {
+              const net = pos.livePnl ?? 0;
+              if (net >= cfg.targetNetUsd) await derivSellNow(pos.id, `Jump Scalper net-profit target reached (${net.toFixed(2)})`);
+              else if (Date.now() - pos.openedAt >= cfg.maxHoldMs && pos.livePnl != null) await derivSellNow(pos.id, "Jump Scalper maximum holding time");
+              continue;
+            }
+            const mark = marks[pos.symbol];
+            if (!(mark > 0)) continue;
+            const gross = (pos.side === "BUY" ? mark - pos.entry : pos.entry - mark) * pos.qty;
+            const notional = pos.entry * pos.qty;
+            const fees = notional * 0.002;
+            const slip = notional * 0.0004;
+            const ex = decideJumpExit({ position: { id:pos.id, venue:pos.venue === "deriv" ? "deriv" : "binance", symbol:pos.symbol, side:pos.side, qty:pos.qty, entry:pos.entry, stop:pos.stop, openedAt:pos.openedAt, feesEstimate:fees, slippageEstimate:slip }, mark, now, grossPnl:gross, fees, slippage:slip, config:cfg });
+            if (ex.close) {
+              if (pos.venue === "paper") settle(pos.id, mark, ex.reason);
+              else if (pos.venue === "binance") await brokerClose(pos, mark, ex.reason);
+            }
+          }
+          // Persist outcomes after each engine pass; historical results only affect ranking
+          // after a minimum sample size and never alter risk limits.
+          for (const p of useBrain.getState().positions.filter(p => p.strategy === "JUMP_SCALPER")) {
+            const old = readJumpMemory().find(r => r.id === p.id);
+            if (p.status === "closed" && p.closedAt) {
+              recordJumpMemory({ id:p.id, venue:p.venue === "deriv" ? "deriv" : "binance", symbol:p.symbol, side:p.side, score:p.quality, state:"oscillating", spreadPct:0, entry:p.entry, exit:p.exit, netPnl:p.pnl ?? 0, openedAt:p.openedAt, closedAt:p.closedAt, outcome:(p.pnl ?? 0) > 0 ? "win" : (p.pnl ?? 0) < 0 ? "loss" : "flat", exitReason:p.exitReason });
+            } else if (!old) {
+              recordJumpMemory({ id:p.id, venue:p.venue === "deriv" ? "deriv" : "binance", symbol:p.symbol, side:p.side, score:p.quality, state:"oscillating", spreadPct:0, entry:p.entry, openedAt:p.openedAt });
+            }
+          }
+          const candidates = enabled.flatMap(symbol => {
+            const isDeriv = isDerivSymbol(symbol);
+            if ((venueNow === "binance" && isDeriv) || (venueNow === "deriv" && !isDeriv)) return [];
+            const venue = isDeriv ? "deriv" as const : "binance" as const;
+            const ticks = liveTicks.getTicks(venue, symbol);
+            const assessment = assessJump(ticks, { maxSpreadPct:cfg.maxSpreadPct });
+            const hist = byMarket.get(`${venue}:${symbol}`) ?? [];
+            const closed = hist.filter(r => r.outcome);
+            const wr = closed.length ? closed.filter(r => r.outcome === "win").length / closed.length : 0.5;
+            return [{ symbol, venue, ticks, assessment, rank:rankOpportunity(assessment, wr, closed.length) }];
+          }).sort((a,b) => b.rank-a.rank);
+          if (useBrain.getState().armed && !useBrain.getState().uncertain && !forceClosing && !haltReason && !goalReached && !useBrain.getState().lossPause) {
+            for (const c of candidates) {
+              const connOk = c.venue === "binance" ? binOn : derOn && deriv.authorized;
+              const live = venueNow === "paper" ? false : c.venue === "binance" ? BINANCE_HOSTS[stSettings.binanceEnv].live : !deriv.virtual;
+              const risk = { equity, dayStartEquity:dayStart, openPositions:useBrain.getState().positions.filter(p=>p.status === "open").map(p=>({ id:p.id, venue:p.venue === "deriv" ? "deriv" as const : "binance" as const, symbol:p.symbol, side:p.side, qty:p.qty, entry:p.entry, stop:p.stop, openedAt:p.openedAt, feesEstimate:p.entry*p.qty*0.002, slippageEstimate:p.entry*p.qty*0.0004 })), now:Date.now(), feedFresh:!!c.ticks.length && Date.now()-c.ticks.at(-1)!.at < 5000, armed:useBrain.getState().armed, liveUnlocked:!live || stSettings.liveUnlock, isLive:live, venueConnected:connOk };
+              const decision = decideJumpEntry({ venue:c.venue, symbol:c.symbol, ticks:c.ticks, config:cfg, risk, marketCooldownUntil:jumpCooldowns.get(`${c.venue}:${c.symbol}`) ?? 0 });
+              if (!decision.ok || !decision.side || !decision.qty) continue;
+              if (c.venue === "binance" && !isFuturesEnv(stSettings.binanceEnv) && decision.side === "SELL") continue;
+              const price = c.ticks.at(-1)!.price;
+              const step = useBrain.getState().filters[c.symbol]?.step ?? 0;
+              let qty = decision.qty;
+              if (step > 0) qty = floorToStep(qty, step);
+              const minNotional = useBrain.getState().filters[c.symbol]?.minNotional ?? 0;
+              if (!(qty > 0) || price*qty < minNotional) continue;
+              const stop = decision.stop!;
+              const estimatedRoundTripPerUnit = price * 0.0024;
+              const targetDistance = Math.max(price * c.assessment.amplitudePct / 100 * 0.25, (cfg.targetNetUsd / Math.max(qty, 1e-12)) + estimatedRoundTripPerUnit);
+              const target = decision.side === "BUY" ? price+targetDistance : price-targetDistance;
+              const intent: EntryIntent = { symbol:c.symbol, side:decision.side, qty:c.venue === "deriv" ? 1 : qty, notional:price*qty, lossAtStop:c.venue === "deriv" ? Math.max(1, Math.min(equity*cfg.riskPct/100, cashNow*0.05)) : Math.abs(price-stop)*qty, entry:price, stop, target, reason:decision.reason, quality:c.assessment.score, strategy:"JUMP_SCALPER", key:`jump-${c.venue}-${c.symbol}-${Math.floor(Date.now()/3000)}`, candleTime:now, regime:"OSCILLATING" };
+              const before = new Set(useBrain.getState().positions.map(p=>p.id));
+              if (venueNow === "paper") bookPaperEntry(intent);
+              else if (c.venue === "binance") await brokerOpen(intent);
+              else await derivOpen(intent);
+              const created = useBrain.getState().positions.find(p=>!before.has(p.id) && p.symbol===c.symbol && p.strategy==="JUMP_SCALPER");
+              jumpCooldowns.set(`${c.venue}:${c.symbol}`, Date.now()+cfg.cooldownMs);
+              if (created) recordJumpMemory({ id:created.id, venue:c.venue, symbol:c.symbol, side:created.side, score:c.assessment.score, state:c.assessment.state, spreadPct:c.assessment.spreadPct, entry:created.entry, openedAt:created.openedAt });
+              if (useBrain.getState().positions.filter(p=>p.status==="open").length >= cfg.maxOpenPositions) break;
+              // One fresh entry per cycle avoids burst orders from a single tick batch.
+              break;
+            }
+          }
+          useBrain.setState({ feedNote:`Jump Scalper ${cfg.enabled ? "ACTIVE" : "OFF"} · ${candidates.length} live markets ranked · ${jumpPositions.length} Jump positions · ${venueNow.toUpperCase()} execution · ${haltReason ?? "risk checks active"}` });
+          return;
+        }
         const rows = enabled.map((symbol) => {
           const candles = useBrain.getState().candles[symbol] ?? [];
           const q = useBrain.getState().quotes[symbol];
@@ -1043,6 +1137,12 @@ export function useEngine() {
   useEffect(() => {
     void useBrain.persist.rehydrate();
     autoReconnect();
+    const offLiveTick = liveTicks.onTick((tick) => {
+      useBrain.setState((state) => ({
+        quotes: { ...state.quotes, [tick.symbol]: { bid: tick.bid ?? state.quotes[tick.symbol]?.bid ?? null, ask: tick.ask ?? state.quotes[tick.symbol]?.ask ?? null, last: tick.price, chg: state.quotes[tick.symbol]?.chg ?? null } },
+        feedAt: tick.at,
+      }));
+    });
     let stop = false;
     let timer = 0;
     let running = false;
@@ -1083,6 +1183,8 @@ export function useEngine() {
       stopSwing();
       stopHive();
       unsub();
+      offLiveTick();
+      liveTicks.stop();
       window.clearTimeout(timer);
     };
   }, []);
@@ -1260,10 +1362,12 @@ async function brokerClose(pos: BookPosition, fallback: number, reason: string) 
     st.log(`${reason} could not be confirmed at Binance. ${res.ok ? "No fill price." : res.error} New entries stopped.`, "bad");
     return;
   }
-  const pnl = pos.side === "BUY" ? (res.avgPrice - pos.entry) * res.executedQty : (pos.entry - res.avgPrice) * res.executedQty;
+  const grossPnl = pos.side === "BUY" ? (res.avgPrice - pos.entry) * res.executedQty : (pos.entry - res.avgPrice) * res.executedQty;
+  const estimatedFees = pos.strategy === "JUMP_SCALPER" ? (pos.entry * pos.qty + res.avgPrice * res.executedQty) * 0.001 : 0;
+  const pnl = grossPnl - estimatedFees;
   useBrain.setState((cur) => ({
     positions: cur.positions.map((p) =>
-      p.id === pos.id ? { ...p, status: "closed" as const, exit: res.avgPrice!, pnl, exitReason: `${reason}. Broker order ${res.orderId}`, closedAt: Date.now() } : p,
+      p.id === pos.id ? { ...p, status: "closed" as const, exit: res.avgPrice!, pnl, fees: p.fees + estimatedFees, exitReason: `${reason}. Broker order ${res.orderId}`, closedAt: Date.now() } : p,
     ),
   }));
   st.log(`${reason}. Binance filled ${res.executedQty} @ ${res.avgPrice.toPrecision(6)}.`);

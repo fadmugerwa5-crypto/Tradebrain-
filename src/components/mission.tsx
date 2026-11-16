@@ -1,11 +1,14 @@
-import { useMemo } from "react";
-import { BINANCE_HOSTS } from "@/lib/market/types";
+import { useEffect, useMemo, useState } from "react";
+import { BINANCE_HOSTS, isDerivSymbol } from "@/lib/market/types";
+import { liveTicks } from "@/lib/brokers/live-ticks";
 import { ago, money } from "@/lib/format";
 import { equityOf, unrealized } from "@/lib/trade/account";
 import { evalGoal, realizedSince, startOfUtcDay } from "@/lib/trade/goal";
 import { useBrain } from "@/stores/brain";
 import { NoBroker, Stat, labelOf } from "./ui";
 import { RadarPanel } from "./radar-panel";
+import { readJumpMemory } from "@/lib/trade/jump-memory";
+import { summarizeMemory } from "@/lib/trade/jump-runtime";
 import { Signal } from "./signal";
 
 export function Mission() {
@@ -45,6 +48,20 @@ export function Mission() {
   const openRisk = open.reduce((s, p) => s + p.plannedRisk, 0);
   const ranked = Object.entries(decisions).sort((a, b) => b[1].quality - a[1].quality).slice(0, 5);
   const conn = useBrain((s) => s.conn);
+  const markets = useBrain((s) => s.markets);
+  const enabled = useBrain((s) => s.settings.enabled);
+  const [jumpRows, setJumpRows] = useState<{ symbol: string; venue: "binance" | "deriv"; state: string; score: number; direction: string; reversals: number; spreadPct: number; reason: string; ticks: number }[]>([]);
+  useEffect(() => {
+    const update = () => setJumpRows(enabled.map(symbol => {
+      const venue = isDerivSymbol(symbol) ? "deriv" : "binance";
+      const ticks = liveTicks.getTicks(venue, symbol);
+      const a = liveTicks.assess(venue, symbol);
+      return { symbol, venue, state: a.state, score: a.score, direction: a.direction, reversals: a.reversals, spreadPct: a.spreadPct, reason: a.reason, ticks: ticks.length };
+    }).sort((a, b) => b.score - a.score).slice(0, 12));
+    update();
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
+  }, [enabled.join("|")]);
   const envLabel = settings.venue === "binance" ? BINANCE_HOSTS[settings.binanceEnv].label : settings.venue === "deriv" ? conn.deriv.label || "Deriv" : "Simulated orders";
   const live = (settings.venue === "binance" && BINANCE_HOSTS[settings.binanceEnv].live) || (settings.venue === "deriv" && conn.deriv.status === "connected" && !conn.deriv.demo);
   const status = uncertain
@@ -113,6 +130,29 @@ export function Mission() {
       </div>
 
       <RadarPanel />
+      <div className="tb-card p-3">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <h2 className="text-sm font-medium">Jump Scalper · live tick scanner</h2>
+          <span className="text-xs text-muted">{jumpRows.filter(r => r.ticks >= 12).length} markets with tick history</span>
+        </div>
+        <p className="mb-3 text-xs text-faint">Intrabar movement analysis. A BUY/SELL bias here is an observation, not an order signal or proof of an executable edge.</p>
+        {jumpRows.length === 0 ? <p className="text-sm text-faint">Enable markets to monitor their live tick movement.</p> : <div className="flex flex-col">
+          {jumpRows.map(row => <div key={`${row.venue}:${row.symbol}`} className="flex items-center justify-between gap-3 border-t border-line py-2 text-sm">
+            <div className="min-w-0"><div className="truncate">{labelOf(row.symbol)} <span className="text-xs text-faint">{row.venue}</span></div><div className="truncate text-xs text-faint">{row.reason}</div></div>
+            <div className="shrink-0 text-right"><div className={row.direction === "BUY" ? "text-up" : row.direction === "SELL" ? "text-down" : "text-muted"}>{row.direction} · {row.score}/100</div><div className="text-xs text-faint">{row.state} · {row.reversals} reversals · {row.ticks} ticks</div></div>
+          </div>)}
+        </div>}
+      </div>
+      <div className="tb-card p-3">
+        <h2 className="mb-2 text-sm font-medium">Jump Scalper · recorded performance</h2>
+        {(() => { const m = summarizeMemory(readJumpMemory()); return <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Stat label="Closed Jump trades" value={String(m.trades)} />
+          <Stat label="Win rate" value={`${(m.winRate * 100).toFixed(1)}%`} />
+          <Stat label="Net recorded P&L" value={money(m.netPnl)} tone={m.netPnl >= 0 ? "up" : "down"} />
+          <Stat label="Profit factor" value={Number.isFinite(m.profitFactor) ? m.profitFactor.toFixed(2) : "∞"} />
+        </div>; })()}
+        <p className="mt-2 text-xs text-faint">Statistics use recorded Jump Scalper closes. Reconcile broker fills and fees against your exchange account history.</p>
+      </div>
       <div className="tb-card p-3">
         <div className="mb-2 flex items-center justify-between">
           <h2 className="text-sm font-medium">Latest signals</h2>

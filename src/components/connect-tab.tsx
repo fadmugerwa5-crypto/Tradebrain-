@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { binanceTestOrder } from "@/lib/brokers/api";
 import { cleanCredential, maskCredential } from "@/lib/brokers/creds";
-import { connectAI, connectBinance, connectDeriv, disconnectAI, disconnectBinance, disconnectDeriv } from "@/lib/brokers/connect";
+import { connectBinance, connectDeriv, disconnectBinance, disconnectDeriv } from "@/lib/brokers/connect";
 import { BINANCE_HOSTS, binanceEnvOf, envAccount, isFuturesEnv, type BinanceAccountType, type BinanceKind } from "@/lib/market/types";
 import { money } from "@/lib/format";
-import { useBrain, type AiSlot, type BrokerConn } from "@/stores/brain";
+import { useBrain, type BrokerConn } from "@/stores/brain";
 import { Num } from "./ui";
 
 const ACCOUNT_HELP: Record<BinanceAccountType, string> = {
@@ -281,69 +281,6 @@ function DerivCard() {
   );
 }
 
-const SLOT_INFO: Record<AiSlot, { title: string; label: string; hint: string; key: "geminiKey" | "grokKey" | "otherKey" }> = {
-  gemini: { title: "AI key 1", label: "API key", hint: "Paste any AI key (Gemini, Groq, OpenRouter, DeepSeek, OpenAI, Claude, Grok, Mistral, Cerebras, Together and more). It is detected automatically.", key: "geminiKey" },
-  grok: { title: "AI key 2", label: "API key", hint: "Optional. Any provider, detected automatically.", key: "grokKey" },
-  other: { title: "AI key 3", label: "API key", hint: "Optional. Any provider, detected automatically.", key: "otherKey" },
-};
-
-function AiKeyBox({ slot }: { slot: AiSlot }) {
-  const info = SLOT_INFO[slot];
-  const key = useBrain((s) => s.secrets[info.key]);
-  const ai = useBrain((s) => s.ai[slot]);
-  const patchSecrets = useBrain((s) => s.patchSecrets);
-  const timer = useRef<number>(0);
-  // The key is checked by itself a moment after it stops changing.
-  useEffect(() => {
-    window.clearTimeout(timer.current);
-    if (!key || key.length < 20) return;
-    if (useBrain.getState().ai[slot].status !== "idle") return;
-    timer.current = window.setTimeout(() => void connectAI(slot), 700);
-    return () => window.clearTimeout(timer.current);
-  }, [key, slot]);
-  return (
-    <Card
-      title={info.title}
-      sub={ai.status === "ready" ? ai.note : info.hint}
-      right={ai.status === "ready" ? <Badge tone="up">Ready</Badge> : ai.status === "checking" ? <Badge tone="idle">Checking…</Badge> : ai.status === "error" ? <Badge tone="down">Not accepted</Badge> : <Badge tone="idle">Off</Badge>}
-    >
-      <SecretInput
-        label={info.label}
-        value={key}
-        onChange={(v) => {
-          useBrain.setState((s) => ({ ai: { ...s.ai, [slot]: { status: "idle", provider: null, model: "", note: "" } } }));
-          patchSecrets({ [info.key]: v });
-        }}
-      />
-      {ai.status === "error" && <ErrorBox text={ai.note} />}
-      {key && (
-        <div className="grid grid-cols-2 gap-2">
-          <button type="button" className={btn} disabled={ai.status === "checking"} onClick={() => void connectAI(slot)}>
-            Check again
-          </button>
-          <button type="button" className={`${btn} text-down`} onClick={() => disconnectAI(slot)}>
-            Remove key
-          </button>
-        </div>
-      )}
-    </Card>
-  );
-}
-
-function AiCard() {
-  return (
-    <>
-      <div>
-        <h2 className="text-lg font-medium">AI analysts</h2>
-        <p className="mt-1 text-xs leading-relaxed text-muted">Optional second opinions on a chart setup. The AI only sees a short text summary when you press Ask, never your exchange keys or balances.</p>
-      </div>
-      <AiKeyBox slot="gemini" />
-      <AiKeyBox slot="grok" />
-      <AiKeyBox slot="other" />
-    </>
-  );
-}
-
 function OrdersCard() {
   const settings = useBrain((s) => s.settings);
   const conn = useBrain((s) => s.conn);
@@ -417,9 +354,8 @@ export function Connect() {
       </div>
       <BinanceCard />
       <DerivCard />
-      <AiCard />
       <OrdersCard />
-      <p className="text-xs leading-relaxed text-faint">Keys are saved on this device only and are sent only to the broker or AI provider they belong to. Use trade-only keys and never enable withdrawals.</p>
+      <p className="text-xs leading-relaxed text-faint">Broker keys are saved on this device only and sent only to the selected broker. Use trade-only keys and never enable withdrawals.</p>
     </section>
   );
 }

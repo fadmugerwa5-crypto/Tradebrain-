@@ -1,4 +1,4 @@
-// TradeBrain desktop shell. The app is a static bundle: this serves it from memory-light local files
+// Jump Scalper desktop shell. The app is a static bundle: this serves it from memory-light local files
 // on a FIXED loopback port (localhost counts as a secure context, and saved keys/journal live in browser
 // storage tied to that origin). No trading server exists: the app talks to Binance/Deriv/AI directly.
 const { app, BrowserWindow, shell, dialog, Menu } = require("electron");
@@ -43,14 +43,14 @@ async function main() {
   Menu.setApplicationMenu(null);
   win = new BrowserWindow({
     width: 1400, height: 900, minWidth: 900, minHeight: 600,
-    backgroundColor: "#e6eff7", title: "TradeBrain", autoHideMenuBar: true,
+    backgroundColor: "#e6eff7", title: "Jump Scalper", autoHideMenuBar: true,
     // webSecurity is off so the app can call Binance/AI endpoints directly (no CORS wall). Only the local bundle is ever loaded here.
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: false },
   });
   win.on("closed", () => { win = null; });
   const root = appDir();
   if (!root) return win.loadURL(pageHtml("Could not start", "App files not found. The installer was built without the app."));
-  try { await serve(root); } catch (e) { return win.loadURL(pageHtml("Could not start", `Port ${PORT} is busy (is TradeBrain already open?).\n${e.message}`)); }
+  try { await serve(root); } catch (e) { return win.loadURL(pageHtml("Could not start", `Port ${PORT} is busy (is Jump Scalper already open?).\n${e.message}`)); }
   const origin = `http://${HOST}:${PORT}`;
   win.webContents.setWindowOpenHandler(({ url }) => { if (!url.startsWith(origin)) shell.openExternal(url); return { action: "deny" }; });
   win.webContents.on("will-navigate", (e, url) => { if (!url.startsWith(origin) && !url.startsWith("data:")) { e.preventDefault(); shell.openExternal(url); } });
@@ -61,6 +61,6 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on("second-instance", () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
-  app.whenReady().then(main).catch((e) => { dialog.showErrorBox("TradeBrain", String((e && e.message) || e)); app.quit(); });
+  app.whenReady().then(main).catch((e) => { dialog.showErrorBox("Jump Scalper", String((e && e.message) || e)); app.quit(); });
   app.on("window-all-closed", () => { if (server) server.close(); app.quit(); });
 }

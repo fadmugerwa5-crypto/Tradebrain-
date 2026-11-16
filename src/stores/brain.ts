@@ -8,6 +8,7 @@ import { GOAL_DEFAULTS, type GoalConfig, type GoalState } from "@/lib/trade/goal
 import { SCALP_DEFAULTS, type ScalpConfig } from "@/lib/trade/scalp";
 import { RADAR_DEFAULTS, type RadarConfig, type RadarView } from "@/lib/trade/radar";
 import { SWING_DEFAULTS, type SwingConfig, type SwingPlan } from "@/lib/trade/swing";
+import { JUMP_DEFAULTS, type JumpConfig } from "@/lib/trade/jump-runtime";
 
 export type ViewName = "hive" | "mission" | "markets" | "chart" | "swing" | "book" | "controls" | "journal" | "learn" | "connect" | "intelligence" | "watchtower";
 
@@ -34,6 +35,8 @@ export type Settings = {
   goal: GoalConfig;
   /** Aggressive mode only: bank small profits, re-scan at once, protect the day's gains. */
   scalp: ScalpConfig;
+  /** Dedicated intrabar oscillation scalper. Disabled until explicitly enabled by the user. */
+  jump: JumpConfig;
   /** Scan every market with every strategy, rank the scalp candidates, let the AI pick, and scalp only those. */
   radar: RadarConfig;
   /** The Trades tab: real swing trades held hours to days, with their own limits. Separate from scalping. */
@@ -167,6 +170,7 @@ const settings0 = (): Settings => ({
   consecLimit: 3,
   goal: { ...GOAL_DEFAULTS },
   scalp: { ...SCALP_DEFAULTS },
+  jump: { ...JUMP_DEFAULTS },
   radar: { ...RADAR_DEFAULTS },
   swing: { ...SWING_DEFAULTS, strategies: [...SWING_DEFAULTS.strategies] },
   enabled: [],
@@ -195,7 +199,7 @@ export function mixByGroup<T extends { group: string }>(list: T[]): T[] {
 export const useBrain = create<Brain>()(
   persist(
     (set) => ({
-      view: "hive",
+      view: "mission",
       symbol: "BTCUSDT",
       armed: false,
       swingArmed: false,
@@ -313,6 +317,7 @@ export const useBrain = create<Brain>()(
           ...old,
           goal: { ...base.goal, ...(old.goal ?? {}), ...(old.goal == null && typeof old.goalAmount === "number" ? { session: old.goalAmount } : {}) },
           // Saves from before v28 had no strictness setting: move them to the relaxed AI (follow the rules if the AI is down, wait longer for it).
+          jump: { ...base.jump, ...(old.jump ?? {}) },
           scalp: { ...base.scalp, ...(old.scalp ?? {}), ...(old.scalp && old.scalp.aiStrict === undefined ? { aiOnFail: "rules" as const, aiTimeoutSec: Math.max(10, old.scalp.aiTimeoutSec ?? 10) } : {}), ...(old.scalp?.normalTimeFrac === 0.7 ? { normalTimeFrac: 0 } : {}), ...(old.scalp?.normalCutPct === 35 ? { normalCutPct: 50 } : {}) },
           // Saves from before v37 hold the old radar numbers (top 4, AI looks at 8): move them to the new shortlist of 5 and the new warm-up and safety settings.
           radar: { ...base.radar, ...(old.radar ?? {}), ...(old.radar && old.radar.perGroup === undefined ? { top: base.radar.top, aiList: base.radar.aiList } : {}) },

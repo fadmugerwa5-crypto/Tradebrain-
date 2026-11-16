@@ -33,11 +33,11 @@ export function Controls() {
   const g = settings.goal;
   const setGoal = (p: Partial<typeof g>) => patch({ goal: { ...g, ...p } });
   const sc = settings.scalp;
-  const aiSlots = useBrain((s) => s.ai);
-  const aiReady = (["gemini", "grok", "other"] as const).filter((k) => aiSlots[k].status === "ready");
   const setScalp = (p: Partial<typeof sc>) => patch({ scalp: { ...sc, ...p } });
   const rd = settings.radar;
   const setRadar = (p: Partial<typeof rd>) => patch({ radar: { ...rd, ...p } });
+  const jp = settings.jump;
+  const setJump = (p: Partial<typeof jp>) => patch({ jump: { ...jp, ...p } });
   const radarRunning = (settings.mode === "aggressive" || (settings.mode === "normal" && sc.normalScalp)) && sc.enabled && rd.enabled;
   const setInd = (p: Partial<typeof settings.ind>) => patch({ ind: { ...settings.ind, ...p } });
   return (
@@ -83,7 +83,7 @@ export function Controls() {
       <div className="rounded-md border border-line p-3">
         <h2 className="text-sm font-medium">Scalp radar: scan every market, pick the best, scalp them</h2>
         <p className="mt-1 text-xs text-faint">
-          After the markets load from your broker, the radar first waits until almost all of them have loaded (warm-up), then runs seven scalping strategies on every one of them, checks how each strategy did on that same market recently (after fees), ranks the live setups, asks the AI to choose the best, and then the bot scalps only those. The risk limits, goals and loss pauses still apply to every entry.
+          After the markets load from your broker, the radar first waits until almost all of them have loaded (warm-up), then runs seven scalping strategies on every one of them, checks how each strategy did on that same market recently (after fees), ranks the live setups, ranks the best opportunities, and then the bot scalps only the selected markets. The risk limits, goals and loss pauses still apply to every entry.
         </p>
         <div className="mt-2 flex flex-wrap gap-2">
           <button
@@ -122,46 +122,34 @@ export function Controls() {
         </button>
       </div>
 
+
+      <div className="rounded-md border border-accent/40 p-3">
+        <h2 className="text-sm font-semibold">Jump Scalper · intrabar micro-scalping</h2>
+        <p className="mt-1 text-xs text-faint">Uses live tick history to identify repeated oscillations. This dedicated mode bypasses the legacy candle strategy while enabled. Start in paper mode; live trading remains subject to broker permissions and the LIVE unlock.</p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Toggle on={jp.enabled} label={jp.enabled ? "Jump engine: ON" : "Jump engine: OFF"} set={(enabled) => { setJump({ enabled }); if (enabled) log("Jump Scalper engine enabled. Legacy candle entries are bypassed while this mode is active.", "warn"); else log("Jump Scalper engine disabled."); }} />
+          <button type="button" className="h-11 rounded-md border border-line px-3 text-sm" onClick={() => setJump({ ...({ enabled: false, minScore: 72, maxSpreadPct: 0.06, targetNetUsd: 0.5, riskPct: 0.25, maxOpenPositions: 4, maxPerMarket: 1, maxDailyLossPct: 2, maxHoldMs: 90000, cooldownMs: 45000, minStopPct: 0.08, maxNotionalPct: 10 }) })}>Reset Jump settings</button>
+        </div>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <Num label="Minimum jump score (0–100)" value={jp.minScore} onChange={(minScore) => setJump({ minScore: Math.max(1, Math.min(100, minScore)) })} />
+          <Num label="Maximum spread %" value={jp.maxSpreadPct} onChange={(maxSpreadPct) => setJump({ maxSpreadPct: Math.max(0.001, maxSpreadPct) })} />
+          <Num label="Net profit target ($) per position" value={jp.targetNetUsd} onChange={(targetNetUsd) => setJump({ targetNetUsd: Math.max(0.05, targetNetUsd) })} />
+          <Num label="Risk per trade %" value={jp.riskPct} onChange={(riskPct) => setJump({ riskPct: Math.max(0.01, Math.min(1, riskPct)) })} />
+          <Num label="Maximum simultaneous positions" value={jp.maxOpenPositions} onChange={(maxOpenPositions) => setJump({ maxOpenPositions: Math.max(1, Math.min(20, Math.round(maxOpenPositions))) })} />
+          <Num label="Maximum positions per market" value={jp.maxPerMarket} onChange={(maxPerMarket) => setJump({ maxPerMarket: Math.max(1, Math.min(5, Math.round(maxPerMarket))) })} />
+          <Num label="Daily loss limit %" value={jp.maxDailyLossPct} onChange={(maxDailyLossPct) => setJump({ maxDailyLossPct: Math.max(0.1, maxDailyLossPct) })} />
+          <Num label="Maximum hold seconds" value={jp.maxHoldMs / 1000} onChange={(n) => setJump({ maxHoldMs: Math.max(5, n) * 1000 })} />
+          <Num label="Market cooldown seconds" value={jp.cooldownMs / 1000} onChange={(n) => setJump({ cooldownMs: Math.max(0, n) * 1000 })} />
+          <Num label="Stop distance %" value={jp.minStopPct} onChange={(minStopPct) => setJump({ minStopPct: Math.max(0.01, minStopPct) })} />
+          <Num label="Maximum notional % of equity" value={jp.maxNotionalPct} onChange={(maxNotionalPct) => setJump({ maxNotionalPct: Math.max(0.1, Math.min(100, maxNotionalPct)) })} />
+        </div>
+      </div>
+
       <div>
         <h2 className="mb-2 text-sm font-medium">Scalp and compound (Aggressive mode only)</h2>
         <div className="flex flex-wrap gap-2">
           <Toggle on={sc.enabled} label={sc.enabled ? "Scalp rules: on" : "Scalp rules: off"} set={(enabled) => setScalp({ enabled })} />
           <Toggle on={sc.stepDown} label={sc.stepDown ? "Half size after 2 losses: on" : "Half size after 2 losses: off"} set={(stepDown) => setScalp({ stepDown })} />
-        </div>
-        <div className="mt-3 rounded-md border border-line p-3">
-          <h3 className="text-sm font-medium">AI controls the scalping</h3>
-          <p className="mt-1 text-xs text-faint">
-            {aiReady.length ? `AI connected: ${aiReady.join(", ")}.` : "No AI connected, so the plain rules run. Add a key on the Connect tab."} The rules engine finds the setup and the risk limits stay in charge. The AI approves or skips, picks where to bank the profit, can shrink the size (never grow it), and watches open trades.
-          </p>
-          <div className="mt-2 flex flex-wrap gap-2">
-            <Toggle on={sc.aiEntry} label={sc.aiEntry ? "AI approves entries: on" : "AI approves entries: off"} set={(aiEntry) => setScalp({ aiEntry })} />
-            <Toggle on={sc.aiManage} label={sc.aiManage ? "AI manages open trades: on" : "AI manages open trades: off"} set={(aiManage) => setScalp({ aiManage })} />
-            <Toggle on={sc.stratGuard} label={sc.stratGuard ? "Strategy guard: on" : "Strategy guard: off"} set={(stratGuard) => setScalp({ stratGuard })} />
-          </div>
-          <div className="mt-2 grid gap-3 sm:grid-cols-2">
-            <Field label="Which AI">
-              <select className="h-11 w-full rounded-md border border-line bg-elev px-2 text-sm" value={sc.aiSlot} onChange={(e) => setScalp({ aiSlot: e.target.value as typeof sc.aiSlot })}>
-                <option value="auto">First connected</option>
-                <option value="gemini">Gemini slot</option>
-                <option value="grok">Grok slot</option>
-                <option value="other">Other slot</option>
-              </select>
-            </Field>
-            <Field label="If the AI cannot answer, new entries">
-              <select className="h-11 w-full rounded-md border border-line bg-elev px-2 text-sm" value={sc.aiOnFail} onChange={(e) => setScalp({ aiOnFail: e.target.value as typeof sc.aiOnFail })}>
-                <option value="skip">Are skipped (safer)</option>
-                <option value="rules">Follow the rules alone</option>
-              </select>
-            </Field>
-            <Field label="How strict the AI is">
-              <select className="h-11 w-full rounded-md border border-line bg-elev-2 px-2 text-sm" value={sc.aiStrict ?? "relaxed"} onChange={(e) => setScalp({ aiStrict: e.target.value as typeof sc.aiStrict })}>
-                <option value="relaxed">Relaxed: takes most setups, vetoes only clear red flags</option>
-                <option value="balanced">Balanced</option>
-                <option value="strict">Strict: skips anything doubtful</option>
-              </select>
-            </Field>
-            <Num label="Seconds to wait for the AI" value={sc.aiTimeoutSec} onChange={(aiTimeoutSec) => setScalp({ aiTimeoutSec: Math.min(20, Math.max(2, aiTimeoutSec)) })} />
-          </div>
         </div>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <Num label="Take profit at R" value={sc.quickR} onChange={(quickR) => setScalp({ quickR })} />

@@ -5,46 +5,35 @@ import { unrealized } from "@/lib/trade/account";
 import { useBrain, type ViewName } from "@/stores/brain";
 import { ChartPage } from "./chart-page";
 import { Connect } from "./connect-tab";
-import { LearnTab } from "./learn-tab";
-import { HiveTab } from "./hive-tab";
-import { useHive } from "@/stores/hive";
-import { startLearning } from "@/lib/learn/watch";
 import { closeAllNow, closePositionNow, forceCloseEverything, useEngine } from "./use-engine";
 import { NoBroker, Stat, labelOf } from "./ui";
 import { Logo } from "./logo";
-import { IntelligenceTab } from "./intelligence-tab";
-import { WatchtowerTab } from "./watchtower-tab";
+import { Mission } from "./mission";
+import { Controls } from "./controls";
 
 const NAV: { id: ViewName; label: string; icon: string }[] = [
-  { id: "hive", label: "Home", icon: "M12 2l8 4.5v9L12 20l-8-4.5v-9zM12 8v4l3 2" },
+  { id: "mission", label: "Scanner", icon: "M4 18V6M10 18V3M16 18v-9M22 18H2" },
   { id: "markets", label: "Markets", icon: "M4 20V10M10 20V4M16 20v-8M22 20H2" },
   { id: "chart", label: "Chart", icon: "M3 17l5-6 4 3 8-9" },
-  { id: "learn", label: "Learn", icon: "M12 3a6 6 0 0 0-3 11v3h6v-3a6 6 0 0 0-3-11zM9 21h6" },
-  { id: "intelligence", label: "Intel", icon: "M12 2a7 7 0 0 0-4 12.75V18h8v-3.25A7 7 0 0 0 12 2zM9 22h6M9 18h6" },
-  { id: "watchtower", label: "Watchtower", icon: "M3 21h18M5 21V9l7-6 7 6v12M9 21v-7h6v7M12 3v4" },
-  { id: "journal", label: "Journal", icon: "M6 3h12v18H6zM9 8h6M9 12h6" },
+  { id: "journal", label: "Positions", icon: "M6 3h12v18H6zM9 8h6M9 12h6" },
+  { id: "controls", label: "Settings", icon: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM4 12H2m20 0h-2M12 4V2m0 20v-2" },
   { id: "connect", label: "Connect", icon: "M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" },
 ];
 
 export function Terminal() {
   useEngine();
-  useEffect(() => {
-    const t = setTimeout(startLearning, 1500);
-    return () => clearTimeout(t);
-  }, []);
   const view = useBrain((s) => s.view);
   const setView = useBrain((s) => s.setView);
   const armed = useBrain((s) => s.armed);
   const swingArmed = useBrain((s) => s.swingArmed);
-    const emergency = useBrain((s) => s.emergency);
+  const emergency = useBrain((s) => s.emergency);
   const log = useBrain((s) => s.log);
   const feedNote = useBrain((s) => s.feedNote);
   const conn = useBrain((s) => s.conn);
   const connected = [conn.binance, conn.deriv].filter((c) => c.status === "connected");
-  const hiveArmed = useHive((s) => s.armed);
   useEffect(() => {
-    void setKeepAlive(armed || swingArmed || hiveArmed);
-  }, [armed, swingArmed, hiveArmed]);
+    void setKeepAlive(armed || swingArmed);
+  }, [armed, swingArmed]);
 
   return (
     <div className="min-h-screen bg-bg text-fg">
@@ -52,7 +41,7 @@ export function Terminal() {
         <div className="flex items-center gap-3 px-4 pt-3">
           <Logo size={36} />
           <div className="min-w-0 flex-1">
-            <h1 className="text-lg font-semibold leading-tight tracking-tight">TradeBrain</h1>
+            <h1 className="text-lg font-semibold leading-tight tracking-tight">Jump Scalper</h1>
             <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted">
               {connected.length === 0 ? (
                 <button type="button" className="text-warn underline underline-offset-2" onClick={() => setView("connect")}>
@@ -75,8 +64,7 @@ export function Terminal() {
             className="h-11 rounded-full border border-line bg-white px-2 text-sm font-medium text-fg"
             onClick={() => {
               emergency();
-              useHive.getState().setArmed(false);
-              log("Stop pressed. The colony is asleep and new entries are off. Open positions were not closed (use Close ALL for that).", "warn");
+              log("Emergency stop pressed. New entries are disabled. Open positions remain protected; use Close ALL to exit them.", "warn");
             }}
           >
             Stop everything
@@ -100,17 +88,15 @@ export function Terminal() {
           ))}
         </nav>
         <main className="min-w-0 pb-28">
-          {view === "hive" && <HiveTab />}
+          {view === "mission" && <Mission />}
           {view === "markets" && <Markets />}
           {view === "chart" && <ChartPage />}
           {view === "journal" && <Journal />}
-          {view === "learn" && <LearnTab />}
-          {view === "intelligence" && <IntelligenceTab />}
-          {view === "watchtower" && <WatchtowerTab />}
+          {view === "controls" && <Controls />}
           {view === "connect" && <Connect />}
         </main>
       </div>
-      <nav className="fixed inset-x-2 bottom-2 z-20 grid grid-cols-8 rounded-3xl border border-white/80 bg-white/80 px-1 pb-[env(safe-area-inset-bottom,0px)] pt-1 shadow-[0_10px_30px_rgba(15,39,68,0.18)] backdrop-blur-md md:hidden" aria-label="Sections">
+      <nav className="fixed inset-x-2 bottom-2 z-20 grid grid-cols-6 rounded-3xl border border-white/80 bg-white/80 px-1 pb-[env(safe-area-inset-bottom,0px)] pt-1 shadow-[0_10px_30px_rgba(15,39,68,0.18)] backdrop-blur-md md:hidden" aria-label="Sections">
         {NAV.map((item) => (
           <button key={item.id} type="button" aria-current={view === item.id ? "page" : undefined} className={`flex h-14 flex-col items-center justify-center gap-1 rounded-2xl text-[10px] ${view === item.id ? "bg-accent/10 font-medium text-accent" : "text-faint"}`} onClick={() => setView(item.id)}>
             <Icon d={item.icon} />

@@ -1,2 +1,6 @@
 node_modules
-android
+dist
+android-shell/android
+android-shell/node_modules
+desktop/node_modules
+desktop/dist
