@@ -1,6 +1,6 @@
 name: Build SignalBrain APK
 on:
-  push: { branches: [main] }
+  push: { branches: [main, signalbrain] }
   workflow_dispatch: {}
 permissions: { contents: write }
 concurrency: { group: build-android, cancel-in-progress: true }
