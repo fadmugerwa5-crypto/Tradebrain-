@@ -1,0 +1,1 @@
+{"appId":"com.signalbrain.app","appName":"SignalBrain","webDir":"www","android":{"allowMixedContent":false},"plugins":{"CapacitorHttp":{"enabled":true}}}
