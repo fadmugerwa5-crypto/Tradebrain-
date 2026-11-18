@@ -188,7 +188,7 @@ export const useHive = create<Hive>()(
           keyState[k] = { ...ks, status: ks.status === "ready" && keys[k].key ? "ready" : ks.status === "checking" ? "idle" : ks.status };
         }
         const pc = (p.config ?? {}) as Partial<HiveConfig>;
-        const config: HiveConfig = { ...HIVE_DEFAULTS, shortlist: pc.shortlist ?? HIVE_DEFAULTS.shortlist, dailyLossPct: pc.dailyLossPct ?? HIVE_DEFAULTS.dailyLossPct, callsPerMin: pc.callsPerMin ?? HIVE_DEFAULTS.callsPerMin, scalp: { ...HIVE_DEFAULTS.scalp, ...(pc.scalp ?? {}) }, trader: { ...HIVE_DEFAULTS.trader, ...(pc.trader ?? {}) } };
+        const config: HiveConfig = { ...HIVE_DEFAULTS, derivMode: pc.derivMode === "riseFall" ? "riseFall" : "multiplier", shortlist: pc.shortlist ?? HIVE_DEFAULTS.shortlist, dailyLossPct: pc.dailyLossPct ?? HIVE_DEFAULTS.dailyLossPct, callsPerMin: pc.callsPerMin ?? HIVE_DEFAULTS.callsPerMin, scalp: { ...HIVE_DEFAULTS.scalp, ...(pc.scalp ?? {}) }, trader: { ...HIVE_DEFAULTS.trader, ...(pc.trader ?? {}) } };
         const desks = { deriv: { ...DESK_DEFAULTS.deriv, ...(p.desks?.deriv ?? {}) }, binance: { ...DESK_DEFAULTS.binance, ...(p.desks?.binance ?? {}) } };
         // Deriv contracts have a fixed duration, so that desk always scalps.
         desks.deriv.style = "scalp";

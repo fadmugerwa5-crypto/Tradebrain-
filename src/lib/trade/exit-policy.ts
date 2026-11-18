@@ -51,3 +51,29 @@ export function derivPatientReview(c: {
 export function minHoldPassed(heldSec: number, minHoldSec: number): boolean {
   return heldSec >= Math.max(0, minHoldSec);
 }
+
+// ---- Deriv multiplier contracts ----
+// A multiplier has no expiry. Deriv holds its stop loss and take profit, so the app's job is to leave it alone, ask the
+// Executor only when a profit worth protecting is on the table, and close it at market if it overstays.
+
+/** Multiplier contracts are labelled "Multiplier xNN" when they are bought. */
+export function isMultiplierLabel(label?: string): boolean {
+  return /^multiplier/i.test((label ?? "").trim());
+}
+
+/** Profit, in multiples of the planned risk, that is worth a second look. Below it the trade runs to its target. */
+export const MULT_BANK_R = 1;
+
+export function multiplierPatientReview(c: { profit: number; risk: number; heldSec: number; minHoldSec: number; bankR?: number }): ReviewGate {
+  if (!(c.risk > 0)) return { review: false, reason: "Planned risk unknown, so no early sale is considered." };
+  if (c.heldSec < Math.max(0, c.minHoldSec)) return { review: false, reason: `Held ${c.heldSec}s of the ${c.minHoldSec}s minimum. Deriv holds the stop and target.` };
+  const r = c.profit / c.risk;
+  const need = c.bankR ?? MULT_BANK_R;
+  if (r < need) return { review: false, reason: `Open result ${r.toFixed(2)}R is under ${need}R. Letting the stop and target decide.` };
+  return { review: true, reason: `Open profit ${r.toFixed(2)}R is worth a second look.` };
+}
+
+/** Has a multiplier trade overstayed? It has no expiry of its own. */
+export function multiplierTimeStop(heldSec: number, maxHoldSec: number): boolean {
+  return maxHoldSec > 0 && heldSec >= maxHoldSec;
+}

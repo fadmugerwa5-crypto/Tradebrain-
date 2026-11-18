@@ -77,6 +77,8 @@ export function parseReply(agent: AgentId, text: string, at: number, ms: number)
   else if (typeof j.approve === "string") out.approve = /^(true|yes|approve)/i.test(j.approve);
   const m = num(j.sizeMult ?? j.size_mult ?? j.size);
   if (m != null) out.sizeMult = clamp(m, 0.1, 1);
+  const rp = num(j.riskPct ?? j.risk_pct ?? j.riskPercent);
+  if (rp != null && rp > 0) out.riskPct = clamp(rp, 0.01, 10);
   return out;
 }
 

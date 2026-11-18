@@ -14,16 +14,20 @@ import { runRound, type Ask } from "./colony.ts";
 import { AFTER_MS, adviceFor, analyzeTrade, gradeAgents, lessonLine, relevantLessons, scorecards, weightsFrom } from "./learn.ts";
 import { CallGate, makeAsk } from "./llm.ts";
 import { extractJson, parseManage } from "./parse.ts";
-import { sizeHive } from "./sizing.ts";
+import { sizeHive, type HiveSize } from "./sizing.ts";
 import { markReviewStart, nextReady, recordReview, refreshOpportunities, saveHiveWait, type WatchOpportunity } from "../trade/watchtower.ts";
 import { derivHiveLossCut } from "../trade/scalp.ts";
-import { DEFAULT_BANK_PCT, DEFAULT_MIN_HOLD_SEC, derivPatientReview, durationSecFromLabel, minHoldPassed, patientMinHold } from "../trade/exit-policy.ts";
+import { DEFAULT_BANK_PCT, DEFAULT_MIN_HOLD_SEC, derivPatientReview, durationSecFromLabel, isMultiplierLabel, minHoldPassed, multiplierPatientReview, multiplierTimeStop, patientMinHold } from "../trade/exit-policy.ts";
+import { sizeMultiplier } from "../trade/swing.ts";
+import { lossStreak, sizeByConviction } from "./conviction.ts";
 import { evaluateTradeSurvival, stopQualityNote } from "../trade/survival.ts";
 import { HIVE_DEFAULTS, type AccountView, type AgentId, type Brief, type DeskVenue, type Lesson, type Style, type StyleCfg } from "./types.ts";
 
 export type ExecVenue = "paper" | "binance" | "deriv";
+/** Extra order detail for a Deriv multiplier: the contract sizing the colony worked out. */
+export type HiveOpenExtra = { deriv?: { multiplier: number; stake: number; stopLoss: number; takeProfit: number } };
 export type HiveDeps = {
-  open: (e: EntryIntent, tag: Partial<BookPosition>, venue: ExecVenue) => Promise<void>;
+  open: (e: EntryIntent, tag: Partial<BookPosition>, venue: ExecVenue, extra?: HiveOpenExtra) => Promise<void>;
   close: (pos: BookPosition, price: number, reason: string) => Promise<void>;
   forceClosing: () => boolean;
 };
@@ -238,6 +242,25 @@ async function monitor(deps: HiveDeps) {
   }
 }
 
+/** Multiplier contracts never expire on their own, so one that overstays is closed at market. No AI is involved. */
+async function timeStops(deps: HiveDeps) {
+  if (deps.forceClosing()) return;
+  const b = useBrain.getState();
+  const h = useHive.getState();
+  const now = Date.now();
+  for (const pos of hivePositions()) {
+    if (pos.venue !== "deriv" || !isMultiplierLabel(pos.durLabel)) continue;
+    const style: Style = pos.hiveStyle ?? "scalp";
+    const maxHold = h.config[style].maxHoldSec ?? 0;
+    const heldSec = Math.floor((now - pos.openedAt) / 1000);
+    if (!multiplierTimeStop(heldSec, maxHold)) continue;
+    if (now - (closing.get(pos.id) ?? 0) < 30_000) continue;
+    closing.set(pos.id, now);
+    h.say("executor", `${pos.symbol}: held ${Math.round(heldSec / 60)} min with no stop or target hit. Closing at market (time stop).`, "info");
+    await deps.close(pos, b.quotes[pos.symbol]?.last ?? pos.entry, `Time stop after ${Math.round(heldSec / 60)} min`);
+  }
+}
+
 /** The Executor looks at each open trade now and then and may close it early. */
 async function manage(deps: HiveDeps) {
   if (deps.forceClosing() || !has("executor")) return;
@@ -281,7 +304,16 @@ async function manage(deps: HiveDeps) {
     // even while the underlying later moves in the predicted direction. Do not let the AI
     // close them just because the first quote is underwater. A deterministic 60% stake-loss
     // guard remains after a 60-second grace period; otherwise let the contract run to expiry.
-    if (pos.venue === "deriv") {
+    const isMult = pos.venue === "deriv" && isMultiplierLabel(pos.durLabel);
+    if (isMult) {
+      // Deriv holds the stop loss and take profit. The Executor is only asked once a profit worth protecting exists.
+      const heldM = Math.max(0, Math.floor((now - pos.openedAt) / 1000));
+      const gateM = multiplierPatientReview({ profit: pnlNow, risk: pos.riskAtStop ?? 0, heldSec: heldM, minHoldSec: cfg.minHoldSec ?? DEFAULT_MIN_HOLD_SEC[style] });
+      if (!gateM.review) {
+        if (receipt && receipt.managementNote !== gateM.reason) useHive.getState().patchReceipt(receipt.id, { managementState: "THESIS_INTACT", managementNote: gateM.reason });
+        continue;
+      }
+    } else if (pos.venue === "deriv") {
       const stake = Math.max(0, pos.plannedRisk);
       const heldSec = Math.max(0, Math.floor((now - pos.openedAt) / 1000));
       const durationSec = durationSecFromLabel(pos.durLabel);
@@ -303,8 +335,8 @@ async function manage(deps: HiveDeps) {
       }
     }
 
-    const survivalText = survival ? ` Adaptive monitor: ${survival.state}. ${survival.reason} Current result ${survival.currentR.toFixed(2)}R; maximum favourable excursion ${survival.maxFavorableR.toFixed(2)}R; maximum adverse excursion ${survival.maxAdverseR.toFixed(2)}R; stop distance ${survival.stopDistanceAtr == null ? "unknown" : survival.stopDistanceAtr.toFixed(2) + " ATR"}. A negative P&L alone is not an exit reason.` : " Deriv fixed-duration contract: it settles by itself and the sale spread is paid on every early close. You are only being asked because the open profit is already large. Close only if that profit is clearly fading; otherwise HOLD.";
-    const text = `Open ${pos.side} ${pos.symbol}${pos.venue === "deriv" ? ` (a Deriv ${pos.durLabel ?? ""} contract: it settles by itself, stake ${pos.plannedRisk.toFixed(2)})` : ""}. Entry ${pos.entry}, stop ${pos.stop}, target ${pos.target}, price now ${price}, profit now ${money(pnlNow)}, open for ${held < 3600 ? `${held}s` : `${(held / 3600).toFixed(1)}h`}.${survivalText}`;
+    const survivalText = survival ? ` Adaptive monitor: ${survival.state}. ${survival.reason} Current result ${survival.currentR.toFixed(2)}R; maximum favourable excursion ${survival.maxFavorableR.toFixed(2)}R; maximum adverse excursion ${survival.maxAdverseR.toFixed(2)}R; stop distance ${survival.stopDistanceAtr == null ? "unknown" : survival.stopDistanceAtr.toFixed(2) + " ATR"}. A negative P&L alone is not an exit reason.` : isMult ? " Deriv multiplier: the stop loss and take profit are already set at the broker. You are only being asked because the open profit is already at least one times the risk. Close early only if that profit is clearly fading and the move looks finished; otherwise HOLD for the target." : " Deriv fixed-duration contract: it settles by itself and the sale spread is paid on every early close. You are only being asked because the open profit is already large. Close only if that profit is clearly fading; otherwise HOLD.";
+    const text = `Open ${pos.side} ${pos.symbol}${pos.venue === "deriv" ? (isMult ? ` (a Deriv ${pos.durLabel ?? ""} contract: Deriv holds the stop loss and take profit, planned risk ${(pos.riskAtStop ?? 0).toFixed(2)})` : ` (a Deriv ${pos.durLabel ?? ""} contract: it settles by itself, stake ${pos.plannedRisk.toFixed(2)})`) : ""}. Entry ${pos.entry}, stop ${pos.stop}, target ${pos.target}, price now ${price}, profit now ${money(pnlNow)}, open for ${held < 3600 ? `${held}s` : `${(held / 3600).toFixed(1)}h`}.${survivalText}`;
     h.patchAgent("executor", { phase: "thinking" });
     const r = await ask("executor", manageSystem(style), text);
     useHive.getState().patchAgent("executor", { phase: "idle" });
@@ -315,7 +347,14 @@ async function manage(deps: HiveDeps) {
     const still = useBrain.getState().positions.find((p) => p.id === pos.id && p.status === "open");
     if (!still || deps.forceClosing()) continue;
     // A Deriv contract is only sold early at a profit that still clears the bank level after the AI answered.
-    if (still.venue === "deriv") {
+    if (still.venue === "deriv" && isMultiplierLabel(still.durLabel)) {
+      const recheckM = multiplierPatientReview({ profit: still.livePnl ?? 0, risk: still.riskAtStop ?? 0, heldSec: Math.max(0, Math.floor((Date.now() - still.openedAt) / 1000)), minHoldSec: cfg.minHoldSec ?? DEFAULT_MIN_HOLD_SEC[style] });
+      if (!recheckM.review) {
+        if (receipt) useHive.getState().patchReceipt(receipt.id, { earlyExitBlocked: (receipt.earlyExitBlocked ?? 0) + 1, managementNote: `Executor close rejected: ${recheckM.reason}` });
+        h.say("executor", `${still.symbol}: early close rejected. ${recheckM.reason}`, "info");
+        continue;
+      }
+    } else if (still.venue === "deriv") {
       const recheck = derivPatientReview({ profit: still.livePnl ?? 0, stake: Math.max(0, still.plannedRisk), heldSec: Math.max(0, Math.floor((Date.now() - still.openedAt) / 1000)), durationSec: durationSecFromLabel(still.durLabel), minHoldSec: cfg.minHoldSec ?? DEFAULT_MIN_HOLD_SEC[style], bankPct: cfg.derivBankPct ?? DEFAULT_BANK_PCT });
       if (!recheck.review) {
         if (receipt) useHive.getState().patchReceipt(receipt.id, { earlyExitBlocked: (receipt.earlyExitBlocked ?? 0) + 1, managementNote: `Executor close rejected: ${recheck.reason}` });
@@ -449,6 +488,11 @@ function accountView(d: Desk, m: { equity: number; cash: number }): AccountView 
   };
 }
 
+/** Does this desk trade Deriv multipliers (real stop loss and take profit held by Deriv)? */
+function multiplierDesk(d: Desk): boolean {
+  return d.venue === "deriv" && !d.sim && useHive.getState().config.derivMode === "multiplier";
+}
+
 type Focus = { id: string; symbol: string; note: string };
 
 async function colonyRound(d: Desk, deps: HiveDeps, focus?: Focus) {
@@ -470,7 +514,12 @@ async function colonyRound(d: Desk, deps: HiveDeps, focus?: Focus) {
       {
         shortlist: list,
         account,
-        config: cfg,
+        config: {
+          ...cfg,
+          // A multiplier has a real stop and target, so it needs a real reward for the risk.
+          ...(multiplierDesk(d) ? { defaultRR: Math.max(cfg.defaultRR, 2), minRR: 1.8 } : {}),
+          sizing: { baseRiskPct: cfg.riskPct, maxRiskPct: cfg.maxRiskPct ?? cfg.riskPct },
+        },
         style: d.style,
         note: focus?.note,
         lessons: (symbol) => relevantLessons(useHive.getState().lessons, { symbol, style: d.style, desk: d.venue }).map(lessonLine),
@@ -514,7 +563,42 @@ async function colonyRound(d: Desk, deps: HiveDeps, focus?: Focus) {
     if (!money2) return;
     const f = fresh.filters[symbol];
     const maxNotional = d.sim ? money2.cash : d.venue === "binance" ? (isFuturesEnv(fresh.settings.binanceEnv) ? money2.cash * fresh.settings.leverage * 0.9 : money2.cash * 0.95) : money2.cash;
-    const size = sizeHive({ venue: execVenue(d), equity: money2.equity, cash: money2.cash, riskPct: cfg.riskPct, sizeMult: dec.sizeMult, price: dec.entry, stop: dec.stop, step: f?.step, minNotional: f?.minNotional, maxNotional });
+    // The AI proposes how much to risk; conviction.ts decides how much it may. Hard caps cannot be argued with.
+    const closedHere = hivePositions(false, d.venue).filter((p) => p.pnl != null).sort((a, b) => (a.closedAt ?? 0) - (b.closedAt ?? 0));
+    const openRiskCash = hivePositions(true, d.venue).reduce((sum, p) => sum + (p.riskAtStop ?? p.plannedRisk ?? 0), 0);
+    const dsNow = useHive.getState().dayStart[d.venue];
+    const dayLoss = dsNow.day === today() ? Math.max(0, dsNow.equity - money2.equity) : 0;
+    const dayLossBudgetCash = dsNow.equity > 0 ? (dsNow.equity * useHive.getState().config.dailyLossPct) / 100 - dayLoss : null;
+    const plannedRR = Math.abs(dec.target - dec.entry) / Math.max(1e-12, Math.abs(dec.entry - dec.stop));
+    const sizing = sizeByConviction({
+      equity: money2.equity,
+      baseRiskPct: cfg.riskPct,
+      maxRiskPct: cfg.maxRiskPct ?? cfg.riskPct,
+      requestedRiskPct: dec.requestedRiskPct,
+      confidence: dec.confidence,
+      agreeing: dec.agreeing ?? 0,
+      rr: plannedRR,
+      consecLosses: lossStreak(closedHere.map((p) => p.pnl ?? 0)),
+      closedTrades: closedHere.length,
+      scaleAfterTrades: cfg.scaleAfterTrades ?? 20,
+      riskGuardMult: dec.sizeMult,
+      openRiskCash,
+      maxOpenRiskPct: cfg.maxOpenRiskPct ?? 3,
+      dayLossBudgetCash,
+    });
+    let size: HiveSize;
+    let extra: HiveOpenExtra | undefined;
+    if (!sizing.ok) size = { ok: false, why: sizing.why };
+    else if (multiplierDesk(d)) {
+      const opts = await deriv.multiplierOptions(symbol).catch(() => null);
+      const ms = opts ? sizeMultiplier({ equity: money2.equity, cash: money2.cash, riskPct: sizing.riskPct, entry: dec.entry, stop: dec.stop, target: dec.target, options: opts }) : null;
+      if (!ms) size = { ok: false, why: `Deriv offers no multiplier contract on ${symbol}, so no order was sent.` };
+      else if (!ms.ok) size = { ok: false, why: ms.why };
+      else {
+        size = { ok: true, qty: 1, notional: ms.stake, lossAtStop: ms.stopLoss };
+        extra = { deriv: { multiplier: ms.multiplier, stake: ms.stake, stopLoss: ms.stopLoss, takeProfit: ms.takeProfit } };
+      }
+    } else size = sizeHive({ venue: execVenue(d), equity: money2.equity, cash: money2.cash, riskPct: sizing.riskPct, sizeMult: 1, price: dec.entry, stop: dec.stop, step: f?.step, minNotional: f?.minNotional, maxNotional });
     if (!size.ok) {
       s.setVerdict({ symbol, label: pickBrief?.label ?? symbol, action: "BLOCKED", reason: size.why, confidence: dec.confidence, t: Date.now() });
       s.say("colony", `${symbol}: the colony agreed on ${dec.action} but the order was not sent. ${size.why}`, "bad");
@@ -539,7 +623,7 @@ async function colonyRound(d: Desk, deps: HiveDeps, focus?: Focus) {
       regime: "hive",
     };
     s.say("executor", `${deskName(d.venue)} ${d.style}: ${dec.action} ${symbol} @ ${dec.entry.toPrecision(6)}, stop ${dec.stop.toPrecision(6)}, target ${dec.target.toPrecision(6)}.`, "info");
-    await deps.open(intent, { id, hive: true, hiveDesk: d.venue, hiveStyle: d.style }, execVenue(d));
+    await deps.open(intent, { id, hive: true, hiveDesk: d.venue, hiveStyle: d.style, riskAtStop: size.lossAtStop }, execVenue(d), extra);
     const opened = useBrain.getState().positions.some((p) => p.id === id);
     const receipt: Receipt = {
       id,
@@ -555,7 +639,7 @@ async function colonyRound(d: Desk, deps: HiveDeps, focus?: Focus) {
       risk: size.lossAtStop,
       venue: `${deskName(d.venue)}${d.sim ? " practice" : ""}`,
       confidence: dec.confidence,
-      reason: dec.reason,
+      reason: sizing.ok ? `${dec.reason} Risk ${sizing.riskPct.toFixed(2)}% (${size.lossAtStop.toFixed(2)})${extra?.deriv ? `, take profit ${extra.deriv.takeProfit.toFixed(2)}, x${extra.deriv.multiplier}` : ""}. ${sizing.notes.join(" ")}` : dec.reason,
       votes: result.replies.filter((r) => r.ok).map((r) => ({ agent: r.agent, vote: r.vote, confidence: r.confidence, note: r.note })),
       outcome: opened ? "sent" : "failed",
       posId: id,
@@ -641,6 +725,7 @@ export function startHiveLoop(deps: HiveDeps): () => void {
       useHive.getState().patch({ callsMin: gate.used() });
       syncPhases();
       await monitor(deps);
+      await timeStops(deps);
       await bookkeeping();
       // The Watchtower is checked on every heartbeat, whether or not the colony is armed.
       watchRefresh(desks);

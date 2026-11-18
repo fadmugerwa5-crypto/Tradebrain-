@@ -49,3 +49,29 @@ test("non-Deriv minimum hold", () => {
   assert.equal(minHoldPassed(30, 90), false);
   assert.equal(minHoldPassed(90, 90), true);
 });
+
+import { MULT_BANK_R, isMultiplierLabel, multiplierPatientReview, multiplierTimeStop } from "./exit-policy.ts";
+
+test("multiplier labels are recognised", () => {
+  assert.equal(isMultiplierLabel("Multiplier x100"), true);
+  assert.equal(isMultiplierLabel("5-minute"), false);
+  assert.equal(isMultiplierLabel(undefined), false);
+});
+
+test("a multiplier is left to its stop and target until it is up a full risk unit", () => {
+  const g = { risk: 90, heldSec: 300, minHoldSec: 90 };
+  assert.equal(multiplierPatientReview({ ...g, profit: 40 }).review, false);
+  assert.equal(multiplierPatientReview({ ...g, profit: -50 }).review, false);
+  assert.equal(multiplierPatientReview({ ...g, profit: 90 * MULT_BANK_R }).review, true);
+});
+
+test("a multiplier is never reviewed inside the minimum hold, even when it is far in profit", () => {
+  assert.equal(multiplierPatientReview({ profit: 300, risk: 90, heldSec: 10, minHoldSec: 90 }).review, false);
+  assert.equal(multiplierPatientReview({ profit: 300, risk: 0, heldSec: 500, minHoldSec: 90 }).review, false);
+});
+
+test("multiplier time stop", () => {
+  assert.equal(multiplierTimeStop(1799, 1800), false);
+  assert.equal(multiplierTimeStop(1800, 1800), true);
+  assert.equal(multiplierTimeStop(99999, 0), false);
+});

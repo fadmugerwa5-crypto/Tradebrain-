@@ -109,19 +109,22 @@ export async function runRound(input: RoundInput, ask: Ask): Promise<RoundResult
   const scalper = replies.find((r) => r.agent === "scalper" && r.ok && r.vote === side);
   const proposals = [] as { stop?: number; target?: number }[];
   let confidence = side === "BUY" ? t.avgBuy : t.avgSell;
+  let requestedRiskPct: number | undefined;
   if (input.has("executor")) {
     const all = replies.filter((r) => r.ok).map((r) => `${r.agent}: ${line(r)}${r.stop != null ? ` [stop ${r.stop}, target ${r.target ?? "n/a"}]` : ""}`).join("\n");
-    const ex = await callAgent("executor", `Give the final call. Colony direction: ${side} on ${pick.symbol}. ${c.reason} Entry is the current market price ${pick.price}.\nEvery agent's answer:\n${all}\n\nMarket briefing:\n${base}`, ask, input);
+    const sizingText = cfg.sizing ? `\nPosition size: choose riskPct. Base risk ${cfg.sizing.baseRiskPct}% of the account, hard maximum ${cfg.sizing.maxRiskPct}%. Reward should be at least ${cfg.minRR ?? 1.5} times the risk.` : "";
+    const ex = await callAgent("executor", `Give the final call. Colony direction: ${side} on ${pick.symbol}. ${c.reason} Entry is the current market price ${pick.price}.${sizingText}\nEvery agent's answer:\n${all}\n\nMarket briefing:\n${base}`, ask, input);
     replies.push(ex);
     talk.push({ agent: "executor", text: line(ex) });
     if (ex.ok && ex.vote !== side) return wait(pick.symbol, ex.vote === "WAIT" ? `Executor said wait${ex.note ? `: ${ex.note}` : "."}` : "Executor chose the opposite direction.", t);
     if (ex.ok) {
       proposals.push({ stop: ex.stop, target: ex.target });
       confidence = (confidence + ex.confidence) / 2;
+      requestedRiskPct = ex.riskPct;
     }
   }
   if (scalper) proposals.push({ stop: scalper.stop, target: scalper.target });
-  const lv = resolveLevels(side, pick.price, pick.atr, proposals, cfg.defaultRR, input.style);
+  const lv = resolveLevels(side, pick.price, pick.atr, proposals, cfg.defaultRR, input.style, cfg.minRR);
 
   // Optional independent Master Intelligence review. It has its own key and can only veto;
   // it cannot change levels, enlarge size, or override deterministic risk controls.
@@ -141,6 +144,8 @@ export async function runRound(input: RoundInput, ask: Ask): Promise<RoundResult
     confidence,
     sizeMult,
     reason: `${c.reason} Levels: ${lv.source}.`,
+    requestedRiskPct,
+    agreeing: side === "BUY" ? t.buy : t.sell,
   };
   return { symbol: pick.symbol, replies, decision, tally: t, chatter: talk };
 }

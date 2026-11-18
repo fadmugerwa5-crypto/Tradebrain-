@@ -55,6 +55,8 @@ export type AgentReply = {
   /** Risk Guard. */
   approve?: boolean;
   sizeMult?: number;
+  /** Executor: percent of equity it wants to risk if the stop is hit. Code decides how much of it is allowed. */
+  riskPct?: number;
   at: number;
   ms: number;
 };
@@ -128,11 +130,28 @@ export type StyleCfg = {
   minHoldSec: number;
   /** Deriv only: open profit (percent of stake) worth selling early. Below this the contract runs to expiry. */
   derivBankPct: number;
+  /** Hard ceiling on the risk the AI may choose for one trade, percent of equity. `riskPct` is the base. */
+  maxRiskPct: number;
+  /** Cap on the total money at risk across open colony trades on the desk, percent of equity. */
+  maxOpenRiskPct: number;
+  /** Closed colony trades needed before the AI's full scale-up is unlocked. */
+  scaleAfterTrades: number;
+  /** Multiplier trades have no expiry, so they are closed at market after this many seconds. */
+  maxHoldSec: number;
 };
 
-export type RoundConfig = Pick<StyleCfg, "minAgree" | "minConfidence" | "defaultRR">;
+export type RoundConfig = Pick<StyleCfg, "minAgree" | "minConfidence" | "defaultRR"> & {
+  /** Smallest reward to risk an agent's target may have. Falls back to the style's own minimum. */
+  minRR?: number;
+  /** Risk limits shown to the Executor so it can choose its own size. */
+  sizing?: { baseRiskPct: number; maxRiskPct: number };
+};
+
+export type DerivMode = "multiplier" | "riseFall";
 
 export type HiveConfig = {
+  /** How the Deriv desk trades. Multiplier: stop loss and take profit held by Deriv, wins can be larger than losses. */
+  derivMode: DerivMode;
   /** How many shortlisted markets the Scout sees. */
   shortlist: number;
   /** Stop opening trades on a desk after losing this percent of its day's starting equity. */
@@ -144,11 +163,12 @@ export type HiveConfig = {
 };
 
 export const STYLE_DEFAULTS: Record<Style, StyleCfg> = {
-  scalp: { interval: "1m", roundSec: 45, manageSec: 20, riskPct: 0.5, maxOpen: 3, minAgree: 3, minConfidence: 60, cooldownSec: 60, defaultRR: 1.5, minHoldSec: 90, derivBankPct: 35 },
-  trader: { interval: "1h", roundSec: 300, manageSec: 120, riskPct: 1, maxOpen: 3, minAgree: 3, minConfidence: 65, cooldownSec: 900, defaultRR: 2.5, minHoldSec: 1800, derivBankPct: 35 },
+  scalp: { interval: "1m", roundSec: 45, manageSec: 20, riskPct: 0.5, maxOpen: 3, minAgree: 3, minConfidence: 60, cooldownSec: 60, defaultRR: 1.5, minHoldSec: 90, derivBankPct: 35, maxRiskPct: 1, maxOpenRiskPct: 3, scaleAfterTrades: 20, maxHoldSec: 1800 },
+  trader: { interval: "1h", roundSec: 300, manageSec: 120, riskPct: 1, maxOpen: 3, minAgree: 3, minConfidence: 65, cooldownSec: 900, defaultRR: 2.5, minHoldSec: 1800, derivBankPct: 35, maxRiskPct: 2, maxOpenRiskPct: 4, scaleAfterTrades: 20, maxHoldSec: 259200 },
 };
 
 export const HIVE_DEFAULTS: HiveConfig = {
+  derivMode: "multiplier",
   shortlist: 5,
   dailyLossPct: 3,
   callsPerMin: 40,
@@ -181,7 +201,7 @@ export type Lesson = {
 
 export type Decision =
   | { action: "WAIT"; reason: string }
-  | { action: "BUY" | "SELL"; entry: number; stop: number; target: number; confidence: number; sizeMult: number; reason: string };
+  | { action: "BUY" | "SELL"; entry: number; stop: number; target: number; confidence: number; sizeMult: number; reason: string; requestedRiskPct?: number; agreeing?: number };
 
 export type RoundResult = {
   symbol: string | null;

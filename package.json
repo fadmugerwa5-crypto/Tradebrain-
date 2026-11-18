@@ -7,7 +7,7 @@
     "dev": "vite --host 0.0.0.0 --port 8080",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test src/lib/market/engine.test.ts src/lib/market/features.test.ts src/lib/brokers/binance.test.ts src/lib/trade/scalp.test.ts src/lib/trade/radar.test.ts src/lib/market/readings.test.ts src/lib/trade/swing.test.ts src/lib/learn/learn.test.ts src/lib/hive/hive.test.ts src/lib/trade/survival.test.ts src/lib/trade/watchtower.test.ts src/lib/trade/exit-policy.test.ts src/lib/trade/jump-scalper.test.ts src/lib/trade/jump-runtime.test.ts"
+    "test": "node --experimental-strip-types --test src/lib/market/engine.test.ts src/lib/market/features.test.ts src/lib/brokers/binance.test.ts src/lib/trade/scalp.test.ts src/lib/trade/radar.test.ts src/lib/market/readings.test.ts src/lib/trade/swing.test.ts src/lib/learn/learn.test.ts src/lib/hive/hive.test.ts src/lib/trade/survival.test.ts src/lib/trade/watchtower.test.ts src/lib/trade/exit-policy.test.ts src/lib/trade/jump-scalper.test.ts src/lib/trade/jump-runtime.test.ts src/lib/hive/conviction.test.ts"
   },
   "dependencies": {
     "lightweight-charts": "^5.2.1",

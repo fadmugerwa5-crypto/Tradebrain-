@@ -549,7 +549,9 @@ export async function openSwingEntry(e: SwingEntry): Promise<void> {
 }
 
 /** Opens a Deriv multiplier contract: stop loss and take profit are part of the contract and held by Deriv. */
-async function derivSwingOpen(e: SwingEntry, tag: Partial<BookPosition>): Promise<void> {
+type DerivMultEntry = Pick<SwingEntry, "symbol" | "side" | "entry" | "stop" | "target" | "reason" | "quality" | "strategy" | "key"> & { deriv?: { multiplier: number; stake: number; stopLoss: number; takeProfit: number } };
+
+async function derivSwingOpen(e: DerivMultEntry, tag: Partial<BookPosition>): Promise<void> {
   const st = useBrain.getState();
   if (!e.deriv) {
     st.log(`Trades: ${e.symbol} has no multiplier sizing, so no Deriv order was sent.`, "warn");
@@ -609,9 +611,11 @@ export async function closeSwingPosition(pos: BookPosition, price: number, reaso
  * Sends one HIVE entry through the same order paths as the scalper (same live-money lock, same exchange-side stop and target on Binance).
  * The colony passes its own position id and hive flag in `tag`, so the receipt can find the trade afterwards.
  */
-export async function openHiveEntry(e: EntryIntent, tag: Partial<BookPosition>, venue: "paper" | "binance" | "deriv"): Promise<void> {
+export async function openHiveEntry(e: EntryIntent, tag: Partial<BookPosition>, venue: "paper" | "binance" | "deriv", extra?: { deriv?: { multiplier: number; stake: number; stopLoss: number; takeProfit: number } }): Promise<void> {
   if (venue === "paper") bookPaperEntry(e, tag);
   else if (venue === "binance") await brokerOpen(e, tag);
+  // A colony multiplier order carries its own stop loss and take profit, held by Deriv. Otherwise the fixed-duration contract is used.
+  else if (venue === "deriv" && extra?.deriv) await derivSwingOpen({ ...e, deriv: extra.deriv }, tag);
   else if (venue === "deriv") await derivOpen(e, tag);
 }
 

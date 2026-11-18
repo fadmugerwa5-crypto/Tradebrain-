@@ -159,7 +159,11 @@ const STYLE_FIELDS: { key: NumKey; label: string; min: number; max: number; help
   { key: "cooldownSec", label: "Wait after a loss (s)", min: 0, max: 86400, help: "" },
   { key: "defaultRR", label: "Reward to risk when no target is given", min: 0.5, max: 6, help: "" },
   { key: "minHoldSec", label: "Executor patience: minimum hold before it may close (s)", min: 0, max: 86400, help: "Deriv contracts also wait 40% of their life." },
-  { key: "derivBankPct", label: "Deriv: profit worth selling early (% of stake)", min: 5, max: 500, help: "Below this the contract runs to expiry." },
+  { key: "derivBankPct", label: "Deriv rise/fall: profit worth selling early (% of stake)", min: 5, max: 500, help: "Below this the contract runs to expiry." },
+  { key: "maxRiskPct", label: "Most the AI may risk on one trade (% of equity)", min: 0.05, max: 10, help: "The AI chooses its own size up to this. It only goes above the base risk when the evidence is strong." },
+  { key: "maxOpenRiskPct", label: "Most risk across all open trades (% of equity)", min: 0.1, max: 20, help: "New trades are cut or blocked beyond this." },
+  { key: "scaleAfterTrades", label: "Trades needed before full scale-up", min: 0, max: 500, help: "Until then the AI may only scale up to half way." },
+  { key: "maxHoldSec", label: "Multiplier trade time stop (s)", min: 60, max: 604800, help: "Multipliers have no expiry. One that overstays is closed at market." },
 ];
 const GLOBAL_FIELDS: { key: "shortlist" | "dailyLossPct" | "callsPerMin"; label: string; min: number; max: number; help: string }[] = [
   { key: "shortlist", label: "Markets the Scout sees", min: 1, max: 10, help: "" },
@@ -208,6 +212,16 @@ export function HiveSettings() {
       </div>
       <StyleBox style="scalp" title="Scalp (Deriv, or Binance if you switch it)" />
       <StyleBox style="trader" title="Trader (Binance, normal trading)" />
+      <label className="flex items-center justify-between gap-2 rounded-2xl border border-line bg-bg/40 p-3 text-xs text-muted">
+        <span>
+          Deriv trade type
+          <span className="mt-0.5 block text-[10px] leading-snug text-faint">Multiplier: Deriv holds a stop loss and take profit, so a win can be bigger than a loss. Rise/fall: fixed 5-minute contract, the win is always smaller than the stake.</span>
+        </span>
+        <select value={config.derivMode} onChange={(e) => patch({ derivMode: e.target.value === "riseFall" ? "riseFall" : "multiplier" })} className="h-10 shrink-0 rounded-xl border border-line bg-elev-2 px-2 text-sm text-fg">
+          <option value="multiplier">Multiplier</option>
+          <option value="riseFall">Rise / fall</option>
+        </select>
+      </label>
       <div className="grid grid-cols-2 gap-3">
         {GLOBAL_FIELDS.map((f) => (
           <div key={f.key}>

@@ -13,8 +13,8 @@ const BOUNDS: Record<Style, { stopLo: number; stopHi: number; tgtLo: number; tgt
  * of the price and a sensible distance away for the style (scalp: stop 0.25 to 4 ATR, trader: 0.5 to 6 ATR).
  * Otherwise ATR-based levels are used. This is a sanity check on typos and hallucinated prices, not a strategy rule.
  */
-export function resolveLevels(side: Exclude<Vote, "WAIT">, price: number, atr: number, proposals: Proposal[], rr: number, style: Style = "scalp"): Levels {
-  const b = BOUNDS[style];
+export function resolveLevels(side: Exclude<Vote, "WAIT">, price: number, atr: number, proposals: Proposal[], rr: number, style: Style = "scalp", minRR?: number): Levels {
+  const b = { ...BOUNDS[style], ...(minRR != null && minRR > 0 ? { minRR } : {}) };
   const dir = side === "BUY" ? 1 : -1;
   const minStop = Math.max(atr * b.stopLo, price * b.floorPct);
   const goodStop = (s: number | undefined) => {

@@ -83,7 +83,8 @@ export const AGENTS: AgentSpec[] = [
     kind: "executor",
     job:
       "You make the final call using every agent's answer. Confirm the direction and give the exact entry, stop and target prices. Say WAIT if the colony is not convincing. " +
-      'JSON: {"action":"BUY|SELL|WAIT","confidence":0-100,"entry":number,"stop":number,"target":number,"note":"max 25 words"}.',
+      "You also choose how much to risk: riskPct is the percent of the account lost if the stop is hit. You are told the base risk and the hard maximum. Risk the base, or less, when the setup is ordinary or you are unsure. Go above the base only when the evidence is unusually strong: several analysts agree, the structure is clean, reward is at least twice the risk and recent trades have not been losses. Never ask for more to win back a loss. Code limits what you are given. " +
+      'JSON: {"action":"BUY|SELL|WAIT","confidence":0-100,"entry":number,"stop":number,"target":number,"riskPct":number,"note":"max 25 words"}.',
   },
   {
     id: "journal",
